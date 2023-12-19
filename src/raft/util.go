@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 	"fmt"
+	"math/rand"
 )
 
 // Debugging
@@ -36,6 +37,7 @@ const (
 	dTrace   logTopic = "TRCE"
 	dVote    logTopic = "VOTE"
 	dWarn    logTopic = "WARN"
+	dRole    logTopic = "ROLE"
 )
 // Retrieve the verbosity level from an environment variable
 func getVerbosity() int {
@@ -69,4 +71,9 @@ func Debug(topic logTopic, format string, a ...interface{}) {
 		format = prefix + format
 		log.Printf(format, a...)
 	}
+}
+
+func GetTimer() int{
+	rand.NewSource(time.Now().UnixNano())
+	return rand.Intn(301) + 500 //[500, 800)
 }

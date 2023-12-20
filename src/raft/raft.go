@@ -465,42 +465,43 @@ func (rf *Raft) ticker() {
 					Debug(dError, "requestvote rpc reply error")
 					return 
 				}
+
 				rf.mu.Lock()
+				defer rf.mu.Unlock()
 				if rf.role != Candidate {
-					rf.mu.Unlock()
 					return 
 				}
 				if reply.Granted {
 					votes += 1
 					if votes >= (tot+1)/2 {
 						rf.role = Leader
-						rf.nextIndex = make([]int, len(rf.logs) + 1)
-						rf.matchIndex = make([]int, 0)
+						rf.nextIndex = make([]int, len(rf.peers))
+						for i := range rf.nextIndex {
+							rf.nextIndex[i] = len(rf.logs) + 1
+						}
+						rf.matchIndex = make([]int, len(rf.peers))
 						Debug(dRole, "S%d becomes Leader, gets %d votes", candidate, votes)
 
 						// send HeartBeats immediately 
-						AppendArgs := AppendEntryArgs{
-							Term: rf.currentTerm,	
-							LeaderId: rf.me,
-						}
-						AppendReply := AppendEntryReply{}
-						rf.mu.Unlock()
 						for i := range rf.peers {
 							if i == candidate {
 								continue
 							}
+							AppendArgs := AppendEntryArgs{
+								Term: term,	
+								LeaderId: candidate,
+							}
+							AppendReply := AppendEntryReply{}
 							go rf.sendAppendEntry(i, &AppendArgs, &AppendReply)
 						}
-						//
-					}
+					} 
 				} else if reply.Term > term {
 					rf.role = Follower
 					rf.currentTerm = reply.Term
 					rf.votedFor = -1
 					rf.persist()
-					rf.mu.Unlock()
 					Debug(dRole, "S%d becomes Follower, term: %d --> %d", candidate, term, reply.Term)
-				}
+				} 
 			}(i)
 		}
 	}
@@ -602,11 +603,14 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	rf.lastApplied = 0
 	rf.commitIndex = 0
-	rf.nextIndex = make([]int, len(rf.peers) + 1)
-	rf.matchIndex = make([]int, 0)
+	rf.nextIndex = make([]int, len(rf.peers))
+	rf.matchIndex = make([]int, len(rf.peers))
 	rf.applyCh = applyCh
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
+	for i := range rf.nextIndex {
+		rf.nextIndex[i] = len(rf.logs) + 1
+	}
 	Debug(dTest, "S%d make ", me)		
 	// start ticker goroutine to start elections
 	go rf.ticker()

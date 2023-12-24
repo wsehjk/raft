@@ -360,19 +360,20 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 	if args.LeaderCommitIndex < rf.commitIndex {
 		rf.commitIndex = args.LeaderCommitIndex
 	}
-	logs := []entry{}
-	logs = append(logs, rf.logs...)
-	for rf.lastApplied < rf.commitIndex { // Follower apply
-		index := rf.lastApplied
-		msg := ApplyMsg{
-			CommandValid: true,
-			Command: logs[index].Command,
-			CommandIndex: index + 1,
-		}
-		Debug(dCommit, "S%d apply command %v at index %d", rf.me, msg.Command, msg.CommandIndex);
-		rf.applyCh <- msg
-		rf.lastApplied ++
-	}
+	rf.apply()
+	// logs := []entry{}
+	// logs = append(logs, rf.logs...)
+	// for rf.lastApplied < rf.commitIndex { // Follower apply
+	// 	index := rf.lastApplied
+	// 	msg := ApplyMsg{
+	// 		CommandValid: true,
+	// 		Command: logs[index].Command,
+	// 		CommandIndex: index + 1,
+	// 	}
+	// 	Debug(dCommit, "S%d apply command %v at index %d", rf.me, msg.Command, msg.CommandIndex);
+	// 	rf.applyCh <- msg
+	// 	rf.lastApplied ++
+	// }
 }
 //
 // send append entry rpc 
@@ -441,46 +442,52 @@ func (rf *Raft) killed() bool {
 //	apply committed logs 
 //
 func (rf *Raft) apply() {
-	tot := len(rf.peers)
-	// rf.commitIndex == len(rf.logs) 怎样
-	pre := rf.commitIndex
-	for i := rf.commitIndex; i < len(rf.logs); i++ {
-		if rf.logs[i].Term != rf.currentTerm {
-			continue
-		}
-		// rf.logs[i].Term == rf.currentTerm 
-		// check
-		num := 1
-		for j, m := range rf.matchIndex {
-			if j == rf.me {
+	if rf.role == Leader {
+		tot := len(rf.peers)
+		// rf.commitIndex == len(rf.logs) 怎样
+		pre := rf.commitIndex
+		for i := rf.commitIndex; i < len(rf.logs); i++ {
+			if rf.logs[i].Term != rf.currentTerm {
 				continue
 			}
-			if m >= i + 1 {
-				num ++
+			// rf.logs[i].Term == rf.currentTerm 
+			// check
+			num := 1
+			for j, m := range rf.matchIndex {
+				if j == rf.me {
+					continue
+				}
+				if m >= i + 1 {
+					num ++
+				}
+			}
+			if num >= (tot+1)/2 { 
+				rf.commitIndex = i + 1 	// 将 commitIndex 置为 i + 1 
+			} else {  	// i 不满足条件， 之后的index当然不满足
+				break 	
 			}
 		}
-		if num >= (tot+1)/2 { 
-			rf.commitIndex = i + 1 	// 将 commitIndex 置为 i + 1 
-		} else {  	// i 不满足条件， 之后的index当然不满足
-			break 	
+		if pre == rf.commitIndex {   // rf.com
+			return 
 		}
 	}
 
-	if pre == rf.commitIndex {   // rf.com
-		return 
-	}
-
-	for rf.lastApplied < rf.commitIndex { // apply
-		index := rf.lastApplied
-		msg := ApplyMsg{
-			CommandValid: true,
-			Command: rf.logs[index].Command,
-			CommandIndex: index + 1, // 偏移 1 位
+	logs := []entry{}
+	logs = append(logs, rf.logs...)
+	go func(beg, end int) {
+		for beg < end { // apply
+			msg := ApplyMsg{
+				CommandValid: true,
+				Command: logs[beg].Command,
+				CommandIndex: beg + 1, // 偏移 1 位
+			}
+			Debug(dCommit, "S%d apply command %v at index %d", rf.me, msg.Command, msg.CommandIndex);
+			rf.applyCh <- msg
+			beg ++
 		}
-		Debug(dCommit, "S%d apply command %v at index %d", rf.me, msg.Command, msg.CommandIndex);
-		rf.applyCh <- msg
-		rf.lastApplied ++
-	}
+	}(rf.lastApplied, rf.commitIndex)
+
+	rf.lastApplied = rf.commitIndex
 }
 // The ticker go routine starts a new election if this peer hasn't received
 // heartsbeats recently.

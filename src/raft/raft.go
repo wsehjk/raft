@@ -18,12 +18,13 @@ package raft
 //
 
 import (
-	//	"bytes"
+	"bytes"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	//	"6.824/labgob"
+	"6.824/labgob"
 	"6.824/labrpc"
 )
 
@@ -111,12 +112,13 @@ func (rf *Raft) GetState() (int, bool) {
 func (rf *Raft) persist() {
 	// Your code here (2C).
 	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// data := w.Bytes()
-	// rf.persister.SaveRaftState(data)
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(rf.currentTerm)
+	e.Encode(rf.votedFor)
+	e.Encode(rf.logs)
+	data := w.Bytes()
+	rf.persister.SaveRaftState(data)
 }
 
 
@@ -129,17 +131,26 @@ func (rf *Raft) readPersist(data []byte) {
 	}
 	// Your code here (2C).
 	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var term int
+	var votedFor int
+	var logs []entry	
+	if d.Decode(&term) != nil ||
+	   d.Decode(&votedFor) != nil || 
+	   d.Decode(&logs) != nil{
+		fmt.Print("readPersisit error")
+		// exit(1)
+		exit(1)
+	} else {
+		rf.currentTerm = term
+		rf.votedFor = votedFor
+		copy(rf.logs, logs)
+	}
+}
+
+func exit(i int) {
+	panic("unimplemented")
 }
 
 
@@ -339,7 +350,7 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 	if args.LeaderCommitIndex < rf.commitIndex {
 		rf.commitIndex = args.LeaderCommitIndex
 	}
-	for rf.lastApplied < rf.commitIndex {
+	for rf.lastApplied < rf.commitIndex { // Follower apply
 		go func(index int) {
 			msg := ApplyMsg{
 				CommandValid: true,
@@ -378,8 +389,18 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	isLeader := true
 
 	// Your code here (2B).
-
-
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	index = len(rf.logs) + 1
+	term = rf.currentTerm
+	isLeader = rf.role == Leader
+	if isLeader {
+		log := entry{
+			Term: rf.currentTerm,
+			Command: command,
+		}
+		rf.logs = append(rf.logs, log)
+	}
 	return index, term, isLeader
 }
 

@@ -425,6 +425,51 @@ func (rf *Raft) killed() bool {
 	return z == 1
 }
 
+// 
+//	apply committed logs 
+//
+func (rf *Raft) apply() {
+	tot := len(rf.peers)
+	// rf.commitIndex == len(rf.logs) 怎样
+	pre := rf.commitIndex
+	for i := rf.commitIndex; i < len(rf.logs); i++ {
+		if rf.logs[i].Term != rf.currentTerm {
+			continue
+		}
+		// rf.logs[i].Term == rf.currentTerm 
+		// check
+		num := 1
+		for j, m := range rf.matchIndex {
+			if j == rf.me {
+				continue
+			}
+			if m >= i + 1 {
+				num ++
+			}
+		}
+		if num >= (tot+1)/2 { 
+			rf.commitIndex = i + 1 	// 将 commitIndex 置为 i + 1 
+		} else {  	// i 不满足条件， 之后的index当然不满足
+			break 	
+		}
+	}
+
+	if pre == rf.commitIndex {   // rf.com
+		return 
+	}
+
+	for rf.lastApplied < rf.commitIndex { // apply
+		go func(index int) {
+			msg := ApplyMsg{
+				CommandValid: true,
+				Command: rf.logs[index].Command,
+				CommandIndex: index + 1, // 偏移 1 位
+			}
+			rf.applyCh <- msg
+		}(rf.lastApplied)
+		rf.lastApplied ++
+	}
+}
 // The ticker go routine starts a new election if this peer hasn't received
 // heartsbeats recently.
 func (rf *Raft) ticker() {
@@ -440,7 +485,7 @@ func (rf *Raft) ticker() {
 		rf.timer -= 10
 		if (rf.timer > 0 && rf.role == Follower) {
 			rf.mu.Unlock()
-			continue 	
+			continue
 		}
 
 		// initiate another round of election 
@@ -466,7 +511,7 @@ func (rf *Raft) ticker() {
 
 		tot := len(rf.peers)
 		rf.mu.Unlock()
-		for i:= range rf.peers {
+		for i := range rf.peers {
 			if i == candidate {
 				continue
 			}
@@ -483,7 +528,7 @@ func (rf *Raft) ticker() {
 				ok := rf.sendRequestVote(peer, &args, &reply)
 
 				if !ok {
-					Debug(dError, "requestvote rpc reply error")
+					Debug(dError, "S%d requestvote rpc reply error", candidate)
 					return 
 				}
 
@@ -585,6 +630,7 @@ func (rf *Raft) applier() {
 					rf.nextIndex[server] = len(logs) + 1
 					rf.matchIndex[server] = len(logs)
 					Debug(dLeader, "S%d [Leader] nextindex[%d]: %d, matchIndex[%d]: %d", rf.me, server, len(logs) + 1, server, len(logs))
+					rf.apply()
 				} else if reply.Term > rf.currentTerm {  // outdate leader 
 					rf.currentTerm = reply.Term
 					rf.votedFor = -1

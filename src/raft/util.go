@@ -75,5 +75,5 @@ func Debug(topic logTopic, format string, a ...interface{}) {
 
 func GetTimer() int{
 	rand.NewSource(time.Now().UnixNano())
-	return rand.Intn(301) + 500 //[500, 800)
+	return rand.Intn(301) + 500 //[500, 800]
 }

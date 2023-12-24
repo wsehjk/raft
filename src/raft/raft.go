@@ -207,11 +207,13 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if args.Term < rf.currentTerm {
 		reply.Term = rf.currentTerm
 		reply.Granted = false
+		Debug(dVote, "S%d reject votes for S%d args.Term: %d rf.currentTerm %d", rf.me, args.Candidate, args.Term, rf.currentTerm)
 		return 
 	}
 	if args.Term == rf.currentTerm && rf.votedFor != -1 {
 		reply.Term = rf.currentTerm
 		reply.Granted = false
+		Debug(dVote, "S%d reject votes for S%d votedFor != -1 term is %d", rf.me, args.Candidate, args.Term)
 		return	
 	}
 
@@ -224,11 +226,13 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if args.LastLogTerm < lastLogTerm {
 		reply.Term = rf.currentTerm
 		reply.Granted = false
+		Debug(dVote, "S%d reject votes for S%d at first check", rf.me, args.Candidate)
 		return	
 	}
 	if args.LastLogTerm == lastLogTerm && args.LastLogIndex < lastLogIndex {
 		reply.Term = rf.currentTerm
 		reply.Granted = false
+		Debug(dVote, "S%d reject votes for S%d at second check", rf.me, args.Candidate)
 		return		
 	}
 
@@ -307,26 +311,32 @@ type AppendEntryReply struct {
 func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	Debug(dLog, "S%d term %d recevie append entry from S%d, term %d", rf.me, rf.currentTerm, args.LeaderId, args.Term)
 	if args.Term < rf.currentTerm {
 		reply.Term = rf.currentTerm
 		reply.Accept = false
 		return
 	}
-	if args.Term > rf.currentTerm {
-		rf.currentTerm = args.Term
-		rf.votedFor = -1
-		rf.persist()
+	if args.Term >= rf.currentTerm {
+		if args.Term > rf.currentTerm {
+			rf.currentTerm = args.Term
+			rf.votedFor = -1
+			rf.persist()
+		}
 		rf.role = Follower
+		Debug(dRole, "S%d ---> follower after recevie from valid Leader", rf.me)
 	}
 	rf.timer = GetTimer()   // recevie append entries from valid Leader 
-	// if len(args.Logs) == 0 {  // heartbeat with empty entries
-	// 	reply.Term = rf.currentTerm
-	// 	reply.Accept = true
-	// 	return
-	// }
 
-	if  args.PrevLogIndex > len(rf.logs) || 
-		(args.PrevLogIndex != 0 && rf.logs[args.PrevLogIndex - 1].Term != args.PrevLogTerm) {
+	if  args.PrevLogIndex > len(rf.logs) {
+		reply.Term = rf.currentTerm
+		reply.Accept = false
+		Debug(dInfo, "S%d args.PrevLogIndex is %d, len(rf.logs) is %d", rf.me, args.PrevLogIndex, len(rf.logs))
+		return
+	}
+	
+	if (args.PrevLogIndex != 0 && rf.logs[args.PrevLogIndex - 1].Term != args.PrevLogTerm) {
+		Debug(dInfo, "S%d last entry not equal", rf.me)
 		reply.Term = rf.currentTerm
 		reply.Accept = false
 		return
@@ -353,14 +363,14 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 	logs := []entry{}
 	logs = append(logs, rf.logs...)
 	for rf.lastApplied < rf.commitIndex { // Follower apply
-		go func(index int) {
-			msg := ApplyMsg{
-				CommandValid: true,
-				Command: logs[index].Command,
-				CommandIndex: index + 1,
-			}
-			rf.applyCh <- msg
-		}(rf.lastApplied)
+		index := rf.lastApplied
+		msg := ApplyMsg{
+			CommandValid: true,
+			Command: logs[index].Command,
+			CommandIndex: index + 1,
+		}
+		Debug(dCommit, "S%d apply command %v at index %d", rf.me, msg.Command, msg.CommandIndex);
+		rf.applyCh <- msg
 		rf.lastApplied ++
 	}
 }
@@ -461,14 +471,14 @@ func (rf *Raft) apply() {
 	}
 
 	for rf.lastApplied < rf.commitIndex { // apply
-		go func(index int) {
-			msg := ApplyMsg{
-				CommandValid: true,
-				Command: rf.logs[index].Command,
-				CommandIndex: index + 1, // 偏移 1 位
-			}
-			rf.applyCh <- msg
-		}(rf.lastApplied)
+		index := rf.lastApplied
+		msg := ApplyMsg{
+			CommandValid: true,
+			Command: rf.logs[index].Command,
+			CommandIndex: index + 1, // 偏移 1 位
+		}
+		Debug(dCommit, "S%d apply command %v at index %d", rf.me, msg.Command, msg.CommandIndex);
+		rf.applyCh <- msg
 		rf.lastApplied ++
 	}
 }
@@ -496,6 +506,7 @@ func (rf *Raft) ticker() {
 			rf.votedFor = rf.me   // vote for it self
 			rf.persist()
 			rf.timer = GetTimer()
+			Debug(dVote, "S%d request votes at term %d", rf.me, rf.currentTerm)
 		}
 		
 		rf.role = Candidate
@@ -530,7 +541,7 @@ func (rf *Raft) ticker() {
 				ok := rf.sendRequestVote(peer, &args, &reply)
 
 				if !ok {
-					Debug(dError, "S%d requestvote rpc reply error", candidate)
+					// Debug(dError, "S%d requestvote rpc reply error", candidate)
 					return 
 				}
 
@@ -548,7 +559,7 @@ func (rf *Raft) ticker() {
 							rf.nextIndex[i] = len(rf.logs) + 1
 						}
 						rf.matchIndex = make([]int, len(rf.peers))
-						Debug(dRole, "S%d becomes Leader, gets %d votes", candidate, votes)
+						Debug(dRole, "S%d becomes Leader, gets %d votes, at term %d", candidate, votes, term)
 
 						// send HeartBeats immediately 
 						for i := range rf.peers {
@@ -624,7 +635,7 @@ func (rf *Raft) applier() {
 
 				ok := rf.sendAppendEntry(server, &args, &reply)
 				if !ok {
-					Debug(dError, "appendEntry rpc reply error")
+					// Debug(dError, "appendEntry rpc reply error")
 					return 
 				}
 
@@ -643,9 +654,10 @@ func (rf *Raft) applier() {
 					rf.votedFor = -1
 					rf.persist()
 					rf.role = Follower
-					Debug(dRole, "S%d [Leader] becomes Follower receiving append entry reply", rf.me)
+					Debug(dRole, "S%d [Leader] -> Follower, append entry reply from S%d, term becomes %d", rf.me, server, reply.Term)
 				} else {
-					nextIndex[server] -= 1    // send one append entry rpc per entry
+					Debug(dInfo, "S%d not accept", server)
+					rf.nextIndex[server] -= 1    // send one append entry rpc per entry
 				}
 			}(i)
 		}

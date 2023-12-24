@@ -319,14 +319,14 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 		rf.role = Follower
 	}
 	rf.timer = GetTimer()   // recevie append entries from valid Leader 
-	if len(args.Logs) == 0 {  // heartbeat with empty entries
-		reply.Term = rf.currentTerm
-		reply.Accept = true
-		return
-	}
+	// if len(args.Logs) == 0 {  // heartbeat with empty entries
+	// 	reply.Term = rf.currentTerm
+	// 	reply.Accept = true
+	// 	return
+	// }
 
 	if  args.PrevLogIndex > len(rf.logs) || 
-		rf.logs[args.PrevLogIndex - 1].Term != args.PrevLogTerm {
+		(args.PrevLogIndex != 0 && rf.logs[args.PrevLogIndex - 1].Term != args.PrevLogTerm) {
 		reply.Term = rf.currentTerm
 		reply.Accept = false
 		return
@@ -335,14 +335,14 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 	reply.Term = rf.currentTerm
 	reply.Accept = true
 
-	i := args.PrevLogIndex - 1
+	i := args.PrevLogIndex
 	j := 0
 	for i < len(rf.logs) && j < len(args.Logs)  {
 		if rf.logs[i] != args.Logs[j] {
 			break
 		}
-		i+=1 
-		j+=1
+		i += 1 
+		j += 1
 	}
 	rf.logs = rf.logs[0:i]
 	rf.logs = append(rf.logs, args.Logs[j:]...)
@@ -350,11 +350,13 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 	if args.LeaderCommitIndex < rf.commitIndex {
 		rf.commitIndex = args.LeaderCommitIndex
 	}
+	logs := []entry{}
+	logs = append(logs, rf.logs...)
 	for rf.lastApplied < rf.commitIndex { // Follower apply
 		go func(index int) {
 			msg := ApplyMsg{
 				CommandValid: true,
-				Command: rf.logs[index].Command,
+				Command: logs[index].Command,
 				CommandIndex: index + 1,
 			}
 			rf.applyCh <- msg
@@ -557,6 +559,11 @@ func (rf *Raft) ticker() {
 								Term: term,	
 								LeaderId: candidate,
 							}
+							AppendArgs.PrevLogIndex = rf.nextIndex[i] - 1
+							AppendArgs.PrevLogTerm = 0
+							if AppendArgs.PrevLogIndex != 0 {
+								AppendArgs.PrevLogTerm = rf.logs[AppendArgs.PrevLogIndex-1].Term
+							}
 							AppendReply := AppendEntryReply{}
 							go rf.sendAppendEntry(i, &AppendArgs, &AppendReply)
 						}
@@ -606,14 +613,14 @@ func (rf *Raft) applier() {
 				}
 
 				// has more comands to replica
-				if len(logs) >= nextIndex[server] {
-					args.PrevLogIndex = nextIndex[server] - 1
-					args.PrevLogTerm = 0
-					if args.PrevLogIndex != 0 {
-						args.PrevLogTerm = logs[args.PrevLogIndex-1].Term
-					}
-					args.Logs = logs[args.PrevLogIndex:]
+				//if len(logs) >= nextIndex[server] {
+				args.PrevLogIndex = nextIndex[server] - 1
+				args.PrevLogTerm = 0
+				if args.PrevLogIndex != 0 {
+					args.PrevLogTerm = logs[args.PrevLogIndex-1].Term
 				}
+				args.Logs = logs[args.PrevLogIndex:]
+				//}
 
 				ok := rf.sendAppendEntry(server, &args, &reply)
 				if !ok {

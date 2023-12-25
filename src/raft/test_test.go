@@ -514,7 +514,7 @@ func TestBackup2B(t *testing.T) {
 	cfg.disconnect((leader1 + 2) % servers)
 	cfg.disconnect((leader1 + 3) % servers)
 	cfg.disconnect((leader1 + 4) % servers)
-
+	Debug(dTrace, "\n disconnect %d %d %d ", (leader1 + 2) % servers, (leader1 + 3) % servers, (leader1 + 4) % servers)
 	// submit lots of commands that won't commit
 	for i := 0; i < 50; i++ {
 		cfg.rafts[leader1].Start(rand.Int())
@@ -524,12 +524,14 @@ func TestBackup2B(t *testing.T) {
 
 	cfg.disconnect((leader1 + 0) % servers)
 	cfg.disconnect((leader1 + 1) % servers)
+	Debug(dTrace, "\n disconnect %d %d", (leader1 + 0) % servers, (leader1 + 1) % servers)
 
 	// allow other partition to recover
 	cfg.connect((leader1 + 2) % servers)
 	cfg.connect((leader1 + 3) % servers)
 	cfg.connect((leader1 + 4) % servers)
 
+	Debug(dTrace, "\n connect %d %d %d ", (leader1 + 2) % servers, (leader1 + 3) % servers, (leader1 + 4) % servers)
 	// lots of successful commands to new group.
 	for i := 0; i < 50; i++ {
 		cfg.one(rand.Int(), 3, true)
@@ -543,6 +545,7 @@ func TestBackup2B(t *testing.T) {
 	}
 	cfg.disconnect(other)
 
+	Debug(dTrace, "\n disconnect %d ", other)
 	// lots more commands that won't commit
 	for i := 0; i < 50; i++ {
 		cfg.rafts[leader2].Start(rand.Int())
@@ -554,9 +557,11 @@ func TestBackup2B(t *testing.T) {
 	for i := 0; i < servers; i++ {
 		cfg.disconnect(i)
 	}
+	Debug(dTrace, "\n disconnect all servers ")
 	cfg.connect((leader1 + 0) % servers)
 	cfg.connect((leader1 + 1) % servers)
 	cfg.connect(other)
+	Debug(dTrace, "\n connect %d %d %d ", (leader1 + 0) % servers, (leader1 + 1) % servers, other)
 
 	// lots of successful commands to new group.
 	for i := 0; i < 50; i++ {
@@ -567,6 +572,9 @@ func TestBackup2B(t *testing.T) {
 	for i := 0; i < servers; i++ {
 		cfg.connect(i)
 	}
+
+	Debug(dTrace, "\n connect all servers ")
+
 	cfg.one(rand.Int(), servers, true)
 
 	cfg.end()

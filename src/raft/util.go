@@ -6,7 +6,8 @@ import (
 	"strconv"
 	"time"
 	"fmt"
-	"math/rand"
+	"crypto/rand"
+	"math/big"
 )
 
 // Debugging
@@ -74,6 +75,8 @@ func Debug(topic logTopic, format string, a ...interface{}) {
 }
 
 func GetTimer() int{
-	rand.NewSource(time.Now().UnixNano())
-	return rand.Intn(301) + 500 //[500, 800]
+	result, _ := rand.Int(rand.Reader, big.NewInt(301))
+	number := result.String()
+	num, _ := strconv.Atoi(number)
+	return num + 500 // [500, 800]
 }

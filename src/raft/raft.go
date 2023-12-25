@@ -26,6 +26,7 @@ import (
 
 	"6.824/labgob"
 	"6.824/labrpc"
+	"math/rand"
 )
 
 //
@@ -217,6 +218,13 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		return	
 	}
 
+	if args.Term > rf.currentTerm {
+		rf.currentTerm = args.Term
+		rf.votedFor = -1
+		rf.persist()
+		rf.role = Follower
+		Debug(dRole, "S%d --> Follower at Term %d", rf.me, rf.currentTerm)
+	}
 	// check election restriction 
 	lastLogIndex := len(rf.logs)
 	lastLogTerm := 0
@@ -226,14 +234,14 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if args.LastLogTerm < lastLogTerm {
 		reply.Term = rf.currentTerm
 		reply.Granted = false
-		Debug(dVote, "S%d reject votes for S%d at first check", rf.me, args.Candidate)
+		Debug(dVote, "S%d reject votes for S%d, lastLogTerm is %d, args.LastLogTerm is %d", rf.me, args.Candidate, lastLogTerm, args.LastLogTerm)
 		return	
 	}
 	if args.LastLogTerm == lastLogTerm && args.LastLogIndex < lastLogIndex {
 		reply.Term = rf.currentTerm
 		reply.Granted = false
-		Debug(dVote, "S%d reject votes for S%d at second check", rf.me, args.Candidate)
-		return		
+		Debug(dVote, "S%d reject votes for S%d lastTerm is %d, lastLogIndex is %d, args.LastLogIndex is %d ", rf.me, args.Candidate, lastLogTerm, lastLogIndex, args.LastLogIndex)
+		return
 	}
 
 	rf.currentTerm = args.Term
@@ -241,6 +249,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.persist()
 	rf.role = Follower
 	rf.timer = GetTimer()  // reset timer because this server votes for candidate 
+	Debug(dTimer, "S%d reset time: %d", rf.me, rf.timer)
 
 	reply.Term = rf.currentTerm
 	reply.Granted = true
@@ -317,16 +326,17 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 		reply.Accept = false
 		return
 	}
-	if args.Term >= rf.currentTerm {
-		if args.Term > rf.currentTerm {
-			rf.currentTerm = args.Term
-			rf.votedFor = -1
-			rf.persist()
-		}
-		rf.role = Follower
-		Debug(dRole, "S%d ---> follower after recevie from valid Leader", rf.me)
+
+	if args.Term > rf.currentTerm {
+		rf.currentTerm = args.Term
+		rf.votedFor = -1
+		rf.persist()
 	}
+	rf.role = Follower
+	Debug(dRole, "S%d ---> follower after recevie from valid Leader", rf.me)
+
 	rf.timer = GetTimer()   // recevie append entries from valid Leader 
+	Debug(dTimer, "S%d reset time: %d", rf.me, rf.timer)
 
 	if  args.PrevLogIndex > len(rf.logs) {
 		reply.Term = rf.currentTerm
@@ -357,6 +367,7 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 	rf.logs = rf.logs[0:i]
 	rf.logs = append(rf.logs, args.Logs[j:]...)
 	rf.commitIndex = len(rf.logs)
+	Debug(dLog, "S%d length of log is %d", rf.me, len(rf.logs))
 	if args.LeaderCommitIndex < rf.commitIndex {
 		rf.commitIndex = args.LeaderCommitIndex
 	}
@@ -414,6 +425,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		}
 		rf.logs = append(rf.logs, log)
 	}
+	Debug(dLog, "S%d length of log is %d", rf.me, len(rf.logs))
 	return index, term, isLeader
 }
 
@@ -495,13 +507,15 @@ func (rf *Raft) ticker() {
 	for !rf.killed() {
 		// Your code here to check if a leader election should
 		// be started and to randomize sleeping time using
-		time.Sleep(10 * time.Millisecond)
+		t := rand.Intn(6) + 15
+		time.Sleep(time.Duration(t) * time.Millisecond)
 		rf.mu.Lock()
 		if rf.role == Leader {
 			rf.mu.Unlock()
 			continue 
 		}
 		rf.timer -= 10
+		//Debug(dTimer, "S%d time redueced to %d", rf.me, rf.timer)
 		if (rf.timer > 0 && rf.role == Follower) {
 			rf.mu.Unlock()
 			continue
@@ -513,6 +527,7 @@ func (rf *Raft) ticker() {
 			rf.votedFor = rf.me   // vote for it self
 			rf.persist()
 			rf.timer = GetTimer()
+			Debug(dTimer, "S%d reset time: %d", rf.me, rf.timer)
 			Debug(dVote, "S%d request votes at term %d", rf.me, rf.currentTerm)
 		}
 		
@@ -663,8 +678,8 @@ func (rf *Raft) applier() {
 					rf.role = Follower
 					Debug(dRole, "S%d [Leader] -> Follower, append entry reply from S%d, term becomes %d", rf.me, server, reply.Term)
 				} else {
-					Debug(dInfo, "S%d not accept", server)
 					rf.nextIndex[server] -= 1    // send one append entry rpc per entry
+					Debug(dInfo, "S%d not accept, rf.nextIndex[%d]-->%d", server, server, rf.nextIndex[server])
 				}
 			}(i)
 		}
@@ -693,6 +708,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.role = Follower
 	rf.votedFor = -1
 	rf.timer = GetTimer()
+	Debug(dTimer, "S%d initial time: %d", rf.me, rf.timer)
 
 	rf.lastApplied = 0
 	rf.commitIndex = 0
@@ -704,7 +720,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	for i := range rf.nextIndex {
 		rf.nextIndex[i] = len(rf.logs) + 1
 	}
-	Debug(dTest, "S%d make ", me)		
+	// Debug(dTest, "S%d make ", me)		
 	// start ticker goroutine to start elections
 	go rf.ticker()
 

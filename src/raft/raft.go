@@ -19,7 +19,7 @@ package raft
 
 import (
 	"bytes"
-	"fmt"
+	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -140,18 +140,12 @@ func (rf *Raft) readPersist(data []byte) {
 	if d.Decode(&term) != nil ||
 	   d.Decode(&votedFor) != nil || 
 	   d.Decode(&logs) != nil{
-		fmt.Print("readPersisit error")
-		// exit(1)
-		exit(1)
-	} else {
-		rf.currentTerm = term
-		rf.votedFor = votedFor
-		copy(rf.logs, logs)
+		log.Fatalf("readPersisit error")
 	}
-}
-
-func exit(i int) {
-	panic("unimplemented")
+	rf.currentTerm = term
+	rf.votedFor = votedFor
+	rf.logs = logs
+	// copy(rf.logs, logs) 使用 copy，rf.logs为空
 }
 
 
@@ -324,6 +318,7 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 	if args.Term < rf.currentTerm {
 		reply.Term = rf.currentTerm
 		reply.Accept = false
+		Debug(dInfo, "S%d append reply is %v", rf.me, *reply)
 		return
 	}
 
@@ -344,6 +339,8 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 		Debug(dInfo, "S%d args.PrevLogIndex is %d, len(rf.logs) is %d", rf.me, args.PrevLogIndex, len(rf.logs))
 		reply.Xterm = -1;
 		reply.Xlen = len(rf.logs)
+		// Debug(dInfo, "S%d append reply xterm is %d, xindex is %d, xlen is %d", rf.me, reply.Xterm, reply.Xindex, reply.Xlen)
+		Debug(dInfo, "S%d append reply is %v", rf.me, *reply)
 		return
 	}
 	
@@ -351,14 +348,16 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 		Debug(dInfo, "S%d last entry not equal", rf.me)
 		reply.Term = rf.currentTerm
 		reply.Accept = false
-		reply.Xterm = rf.logs[args.PrevLogIndex - 1].Term  // conflicting 
+		reply.Xterm = rf.logs[args.PrevLogIndex - 1].Term  // conflicting term
 		// find the index of first entry with confliting term 
 		for i := args.PrevLogIndex - 1; i >= 0; i -- {
-			if rf.logs[i].Term != reply.Term {
+			if rf.logs[i].Term != reply.Xterm {  //
 				break
 			}
 			reply.Xindex = i + 1
 		} 
+		// Debug(dInfo, "S%d append reply xterm is %d, xindex is %d, xlen is %d", rf.me, reply.Xterm, reply.Xindex, reply.Xlen)
+		Debug(dInfo, "S%d append reply is %v", rf.me, *reply)
 		return
 	}
 
@@ -568,8 +567,11 @@ func (rf *Raft) ticker() {
 
 				rf.mu.Lock()
 				defer rf.mu.Unlock()
-				if rf.role != Candidate {
+				if rf.role != Candidate || rf.currentTerm != args.Term{
 					return 
+				}
+				if reply.Term < rf.currentTerm {
+					return
 				}
 				if reply.Granted {
 					votes += 1
@@ -645,14 +647,12 @@ func (rf *Raft) applier() {
 				}
 
 				// has more comands to replica
-				//if len(logs) >= nextIndex[server] {
 				args.PrevLogIndex = nextIndex[server] - 1
 				args.PrevLogTerm = 0
 				if args.PrevLogIndex != 0 {
 					args.PrevLogTerm = logs[args.PrevLogIndex-1].Term
 				}
 				args.Logs = logs[args.PrevLogIndex:]
-				//}
 
 				ok := rf.sendAppendEntry(server, &args, &reply)
 				if !ok {
@@ -662,9 +662,13 @@ func (rf *Raft) applier() {
 
 				rf.mu.Lock()  //relock
 				defer rf.mu.Unlock()
-				if rf.role != Leader {
+				if rf.role != Leader || rf.currentTerm != args.Term{
 					return 
 				}
+				if reply.Term < rf.currentTerm {
+					return 
+				}
+				Debug(dInfo, "S%d [Leader: %d] receive append reply %v from S%d ", rf.me, rf.currentTerm ,reply, server)
 				if reply.Accept {  // accept 
 					rf.nextIndex[server] = len(logs) + 1
 					rf.matchIndex[server] = len(logs)
@@ -676,8 +680,9 @@ func (rf *Raft) applier() {
 					rf.persist()
 					rf.role = Follower
 					Debug(dRole, "S%d [Leader] -> Follower, append entry reply from S%d, term becomes %d", rf.me, server, reply.Term)
-				} else {
+				} else { // reply.accept == false && reply.Term <= rf.current
 					//rf.nextIndex[server] -= 1    // send one append entry rpc per entry
+					Debug(dInfo, "S%d not accept, xterm: %d xindex: %d xlen: %d", server, reply.Xterm, reply.Xindex, reply.Xlen)
 					if reply.Xterm == -1 {
 						rf.nextIndex[server] = reply.Xlen + 1
 					} else {
@@ -732,6 +737,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.applyCh = applyCh
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
+	Debug(dPersist, "S%d length of log is %d after read", rf.me, len(rf.logs))
+	Debug(dPersist, "S%d term is %d after read", rf.me, rf.currentTerm)
 	for i := range rf.nextIndex {
 		rf.nextIndex[i] = len(rf.logs) + 1
 	}

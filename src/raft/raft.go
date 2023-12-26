@@ -311,7 +311,7 @@ type AppendEntryReply struct {
 
 	Xterm int
 	Xindex int
-	Len int
+	Xlen int
 }
 
 // 
@@ -342,6 +342,8 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 		reply.Term = rf.currentTerm
 		reply.Accept = false
 		Debug(dInfo, "S%d args.PrevLogIndex is %d, len(rf.logs) is %d", rf.me, args.PrevLogIndex, len(rf.logs))
+		reply.Xterm = -1;
+		reply.Xlen = len(rf.logs)
 		return
 	}
 	
@@ -349,6 +351,14 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 		Debug(dInfo, "S%d last entry not equal", rf.me)
 		reply.Term = rf.currentTerm
 		reply.Accept = false
+		reply.Xterm = rf.logs[args.PrevLogIndex - 1].Term  // conflicting 
+		// find the index of first entry with confliting term 
+		for i := args.PrevLogIndex - 1; i >= 0; i -- {
+			if rf.logs[i].Term != reply.Term {
+				break
+			}
+			reply.Xindex = i + 1
+		} 
 		return
 	}
 
@@ -366,25 +376,13 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 	}
 	rf.logs = rf.logs[0:i]
 	rf.logs = append(rf.logs, args.Logs[j:]...)
+	rf.persist()
 	rf.commitIndex = len(rf.logs)
 	Debug(dLog, "S%d length of log is %d", rf.me, len(rf.logs))
 	if args.LeaderCommitIndex < rf.commitIndex {
 		rf.commitIndex = args.LeaderCommitIndex
 	}
 	rf.apply()
-	// logs := []entry{}
-	// logs = append(logs, rf.logs...)
-	// for rf.lastApplied < rf.commitIndex { // Follower apply
-	// 	index := rf.lastApplied
-	// 	msg := ApplyMsg{
-	// 		CommandValid: true,
-	// 		Command: logs[index].Command,
-	// 		CommandIndex: index + 1,
-	// 	}
-	// 	Debug(dCommit, "S%d apply command %v at index %d", rf.me, msg.Command, msg.CommandIndex);
-	// 	rf.applyCh <- msg
-	// 	rf.lastApplied ++
-	// }
 }
 //
 // send append entry rpc 
@@ -424,8 +422,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			Command: command,
 		}
 		rf.logs = append(rf.logs, log)
+		rf.persist()
+		Debug(dLog, "S%d [Leader] length of log is %d", rf.me, len(rf.logs))
 	}
-	Debug(dLog, "S%d length of log is %d", rf.me, len(rf.logs))
 	return index, term, isLeader
 }
 
@@ -678,7 +677,23 @@ func (rf *Raft) applier() {
 					rf.role = Follower
 					Debug(dRole, "S%d [Leader] -> Follower, append entry reply from S%d, term becomes %d", rf.me, server, reply.Term)
 				} else {
-					rf.nextIndex[server] -= 1    // send one append entry rpc per entry
+					//rf.nextIndex[server] -= 1    // send one append entry rpc per entry
+					if reply.Xterm == -1 {
+						rf.nextIndex[server] = reply.Xlen + 1
+					} else {
+						xTerm := reply.Xterm
+						index := reply.Xindex
+						for i := args.PrevLogIndex - 1; i >= 0; i-- {
+							if rf.logs[i].Term < xTerm {
+								break
+							}
+							if rf.logs[i].Term == xTerm {
+								index = i + 1
+								break
+							}
+						}
+						rf.nextIndex[server] = index
+					}
 					Debug(dInfo, "S%d not accept, rf.nextIndex[%d]-->%d", server, server, rf.nextIndex[server])
 				}
 			}(i)

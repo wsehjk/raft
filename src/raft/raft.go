@@ -422,7 +422,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		}
 		rf.logs = append(rf.logs, log)
 		rf.persist()
-		Debug(dLog, "S%d [Leader] length of log is %d", rf.me, len(rf.logs))
+		Debug(dLog, "S%d [Leader: %d] length of log is %d", rf.me, rf.currentTerm, len(rf.logs))
 	}
 	return index, term, isLeader
 }
@@ -484,20 +484,16 @@ func (rf *Raft) apply() {
 
 	logs := []entry{}
 	logs = append(logs, rf.logs...)
-	go func(beg, end int) {
-		for beg < end { // apply
-			msg := ApplyMsg{
-				CommandValid: true,
-				Command: logs[beg].Command,
-				CommandIndex: beg + 1, // 偏移 1 位
-			}
-			Debug(dCommit, "S%d apply command %v at index %d", rf.me, msg.Command, msg.CommandIndex);
-			rf.applyCh <- msg
-			beg ++
+	for rf.lastApplied < rf.commitIndex { // apply
+		msg := ApplyMsg{
+			CommandValid: true,
+			Command: logs[rf.lastApplied].Command,
+			CommandIndex: rf.lastApplied + 1, // 偏移 1 位
 		}
-	}(rf.lastApplied, rf.commitIndex)
-
-	rf.lastApplied = rf.commitIndex
+		Debug(dCommit, "S%d apply command %v at index %d end is %d", rf.me, msg.Command, msg.CommandIndex, rf.commitIndex);
+		rf.applyCh <- msg
+		rf.lastApplied ++
+	}
 }
 // The ticker go routine starts a new election if this peer hasn't received
 // heartsbeats recently.

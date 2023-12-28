@@ -205,12 +205,24 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		Debug(dVote, "S%d reject votes for S%d args.Term: %d rf.currentTerm %d", rf.me, args.Candidate, args.Term, rf.currentTerm)
 		return 
 	}
-	if args.Term == rf.currentTerm && rf.votedFor != -1 {
-		reply.Term = rf.currentTerm
-		reply.Granted = false
-		Debug(dVote, "S%d reject votes for S%d votedFor != -1 term is %d", rf.me, args.Candidate, args.Term)
-		return	
+	if args.Term == rf.currentTerm {
+		if rf.votedFor == args.Candidate {
+			reply.Term = rf.currentTerm
+			reply.Granted = true 	// voted for same candidate 需要重置时间吗
+			return 
+		} else if rf.votedFor != -1 {
+			reply.Term = rf.currentTerm
+			reply.Granted = false
+			Debug(dVote, "S%d reject votes for S%d votedFor == %s, term is %d", rf.me, args.Candidate, rf.votedFor, args.Term)
+			return		
+		}
 	}
+	// if args.Term == rf.currentTerm && rf.votedFor != -1 {
+	// 	reply.Term = rf.currentTerm
+	// 	reply.Granted = false
+	// 	Debug(dVote, "S%d reject votes for S%d votedFor != -1 term is %d", rf.me, args.Candidate, args.Term)
+	// 	return	
+	// }
 
 	if args.Term > rf.currentTerm {
 		rf.currentTerm = args.Term
@@ -364,6 +376,7 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 	reply.Term = rf.currentTerm
 	reply.Accept = true
 
+	//if len(args.Logs) != 0 {
 	i := args.PrevLogIndex
 	j := 0
 	for i < len(rf.logs) && j < len(args.Logs)  {
@@ -373,9 +386,26 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 		i += 1 
 		j += 1
 	}
-	rf.logs = rf.logs[0:i]
-	rf.logs = append(rf.logs, args.Logs[j:]...)
-	rf.persist()
+	logs := []entry{}
+	logs = append(logs, rf.logs[0:i]...)
+	logs = append(logs, args.Logs[j:]...)
+	if len(logs) >= len(rf.logs) {
+		rf.logs = logs
+		rf.persist()
+	} else { // len(logs) < len(rf.logs) may be outdated appendEntry
+		flag := true
+		for i, ent := range logs {
+			if ent != rf.logs[i] {
+				flag = false;
+			}
+		}
+		if !flag { // if flag == true, then outdated appendEntry 
+			rf.logs = logs
+			rf.persist()
+		}
+	}
+	//}
+
 	rf.commitIndex = len(rf.logs)
 	Debug(dLog, "S%d length of log is %d", rf.me, len(rf.logs))
 	if args.LeaderCommitIndex < rf.commitIndex {
@@ -509,7 +539,7 @@ func (rf *Raft) ticker() {
 			continue 
 		}
 		rf.timer -= 10
-		//Debug(dTimer, "S%d time redueced to %d", rf.me, rf.timer)
+		Debug(dTimer, "S%d time redueced to %d", rf.me, rf.timer)
 		if (rf.timer > 0 && rf.role == Follower) {
 			rf.mu.Unlock()
 			continue
@@ -601,7 +631,7 @@ func (rf *Raft) ticker() {
 				} else if reply.Term > term {
 					rf.role = Follower
 					rf.currentTerm = reply.Term
-					rf.votedFor = -1
+					rf.votedFor = -1  // 是否需要重置时间
 					rf.persist()
 					Debug(dRole, "S%d becomes Follower, term: %d --> %d", candidate, term, reply.Term)
 				} 

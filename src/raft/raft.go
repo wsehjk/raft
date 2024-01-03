@@ -208,7 +208,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if args.Term == rf.currentTerm {
 		if rf.votedFor == args.Candidate {
 			reply.Term = rf.currentTerm
-			reply.Granted = true 	// voted for same candidate 需要重置时间吗
+			reply.Granted = true 	// voted for same candidate 不需要重置时间吗
 			return 
 		} else if rf.votedFor != -1 {
 			reply.Term = rf.currentTerm
@@ -217,12 +217,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 			return		
 		}
 	}
-	// if args.Term == rf.currentTerm && rf.votedFor != -1 {
-	// 	reply.Term = rf.currentTerm
-	// 	reply.Granted = false
-	// 	Debug(dVote, "S%d reject votes for S%d votedFor != -1 term is %d", rf.me, args.Candidate, args.Term)
-	// 	return	
-	// }
 
 	if args.Term > rf.currentTerm {
 		rf.currentTerm = args.Term
@@ -492,7 +486,7 @@ func (rf *Raft) apply() {
 			}
 			// rf.logs[i].Term == rf.currentTerm 
 			// check
-			num := 1
+			num := 1 // self 
 			for j, m := range rf.matchIndex {
 				if j == rf.me {
 					continue
@@ -507,7 +501,7 @@ func (rf *Raft) apply() {
 				break 	
 			}
 		}
-		if pre == rf.commitIndex {   // rf.com
+		if pre == rf.commitIndex {   // have no entries to apply
 			return 
 		}
 	}
@@ -538,7 +532,7 @@ func (rf *Raft) ticker() {
 			rf.mu.Unlock()
 			continue 
 		}
-		rf.timer -= 10
+		rf.timer -= t
 		Debug(dTimer, "S%d time redueced to %d", rf.me, rf.timer)
 		if (rf.timer > 0 && rf.role == Follower) {
 			rf.mu.Unlock()

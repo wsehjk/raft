@@ -648,6 +648,7 @@ func (cfg *config) LogSize() int {
 	logsize := 0
 	for i := 0; i < cfg.n; i++ {
 		n := cfg.saved[i].RaftStateSize()
+		Debug(dTest, "S%d log size is %d", i, n)
 		if n > logsize {
 			logsize = n
 		}

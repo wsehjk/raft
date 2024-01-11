@@ -185,7 +185,61 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	rf.persist()
 }
 
+type SnapshotArgs struct {
+	Snapshots []byte
+	Logs []entry
+	LastIncludedIndex int
+	LastIncludedTerm int
+	Term int // leader's term	
+}
+type SnapshotReply struct {
+	Term int
+}
 
+func (rf *Raft) InstallSnapshot(args *SnapshotArgs, reply *SnapshotReply) {
+	rf.mu.Lock()
+	if (args.Term < rf.currentTerm) {
+		reply.Term = rf.currentTerm
+		rf.mu.Unlock()
+		return 
+	}
+	if (args.Term > rf.currentTerm) {
+		rf.currentTerm = args.Term
+		rf.votedFor = -1
+		rf.persist()	
+	}
+	rf.role = Follower
+	Debug(dRole, "S%d ---> follower after receive snapshot from valid Leader", rf.me)
+
+	rf.timer = GetTimer()   // receive append entries from valid Leader 
+	Debug(dTimer, "S%d reset time: %d", rf.me, rf.timer)	
+
+	if (args.LastIncludedIndex < rf.lastIncludedIndex) {  // outdated snapshot
+		reply.Term = rf.currentTerm
+		rf.mu.Unlock()
+		return 
+	}
+	rf.snapshots = args.Snapshots
+	rf.lastIncludedIndex = args.LastIncludedIndex
+	rf.lastIncludedTerm = args.LastIncludedTerm
+	rf.lastApplied = rf.lastIncludedIndex
+	rf.commitIndex = rf.lastApplied
+	rf.logs = args.Logs
+	msg := ApplyMsg{
+		SnapshotValid: true,
+		Snapshot: rf.snapshots,
+		SnapshotTerm: rf.lastIncludedTerm,
+		SnapshotIndex: rf.lastIncludedIndex,
+	}	
+	rf.persist()
+	rf.mu.Unlock() // release lock to avoid 4way lock
+	rf.applyCh <- msg
+}
+
+func (rf *Raft) sendInstallSnapshot(server int, args *SnapshotArgs, reply *SnapshotReply) bool {
+	ok := rf.peers[server].Call("Raft.InstallSnapshot", args, reply)
+	return ok
+}
 //
 // example RequestVote RPC arguments structure.
 // field names must start with capital letters!
@@ -335,7 +389,7 @@ type AppendEntryReply struct {
 func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	Debug(dLog, "S%d term %d recevie append entry from S%d, term %d", rf.me, rf.currentTerm, args.LeaderId, args.Term)
+	Debug(dLog, "S%d term %d receive append entry from S%d, term %d", rf.me, rf.currentTerm, args.LeaderId, args.Term)
 	if args.Term < rf.currentTerm {
 		reply.Term = rf.currentTerm
 		reply.Accept = false
@@ -349,9 +403,9 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 		rf.persist()
 	}
 	rf.role = Follower
-	Debug(dRole, "S%d ---> follower after recevie from valid Leader", rf.me)
+	Debug(dRole, "S%d ---> follower after receive append entry from valid Leader", rf.me)
 
-	rf.timer = GetTimer()   // recevie append entries from valid Leader 
+	rf.timer = GetTimer()   // receive append entries from valid Leader 
 	Debug(dTimer, "S%d reset time: %d", rf.me, rf.timer)
 
 	if  args.PrevLogIndex > len(rf.logs) + rf.lastIncludedIndex{
@@ -364,7 +418,16 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 		Debug(dInfo, "S%d append reply is %v", rf.me, *reply)
 		return
 	}
-	
+
+	if (args.PrevLogIndex < rf.lastIncludedIndex) {
+		Debug(dInfo, "S%d args.PrevLogIndex %d < rf.lastIncludedIndex %d", args.PrevLogIndex, rf.lastIncludedIndex)
+		reply.Xterm = -1
+		reply.Accept = false
+		reply.Xlen = rf.lastIncludedIndex // nextIndex becomes rf.lastIncludedIndex + 1
+		return 
+	}
+	// if args.PrevLogIndex == rf.lastIncludedIndex, then args.PrevLogTerm should be equal to rf.lastIncludedTerm
+	// because consensus has been reached 
 	if (args.PrevLogIndex != rf.lastIncludedIndex && rf.logs[args.PrevLogIndex - 1 - rf.lastIncludedIndex].Term != args.PrevLogTerm) {
 		Debug(dInfo, "S%d prev entry not equal, prevlogIndex is %d", rf.me, args.PrevLogIndex)
 		Debug(dInfo, "S%d logs term is %d, args.Term is %d", rf.me, rf.logs[args.PrevLogIndex - 1 - rf.lastIncludedIndex].Term, args.PrevLogTerm)
@@ -684,6 +747,7 @@ func (rf *Raft) applier() {
 		leaderId := rf.me
 		lastIncludedIndex := rf.lastIncludedIndex
 		lastIncludedTerm := rf.lastIncludedTerm
+		snapshots := rf.snapshots
 		rf.mu.Unlock()
 
 		for i := range rf.peers {
@@ -691,78 +755,118 @@ func (rf *Raft) applier() {
 				continue
 			}
 			go func(server int) {
-				reply := AppendEntryReply{}
-				args := AppendEntryArgs{
-					Term : term,
-					LeaderId : leaderId,
-					LeaderCommitIndex : commitIndex,
-				}
-
-				// has more comands to replica
-				args.PrevLogIndex = nextIndex[server] - 1
-				args.PrevLogTerm = lastIncludedTerm 
-				Debug(dInfo, "S%d to S%d prevlogIndex %d, lastIncludeIndex: %d", leaderId, server, args.PrevLogIndex, lastIncludedIndex)
-				if args.PrevLogIndex != lastIncludedIndex {
-					args.PrevLogTerm = logs[args.PrevLogIndex-1-lastIncludedIndex].Term
-				}
-				args.Logs = logs[args.PrevLogIndex-lastIncludedIndex:]
-
-				ok := rf.sendAppendEntry(server, &args, &reply)
-				if !ok {
-					// Debug(dError, "appendEntry rpc reply error")
-					return 
-				}
-
-				rf.mu.Lock()  //relock
-				defer rf.mu.Unlock()
-				if rf.role != Leader || rf.currentTerm != args.Term{
-					return 
-				}
-				if reply.Term < rf.currentTerm {
-					return 
-				}
-				Debug(dInfo, "S%d [Leader: %d] receive append reply %v from S%d ", rf.me, rf.currentTerm ,reply, server)
-				if reply.Accept {  // accept 
-					rf.nextIndex[server] = len(logs) + 1 + lastIncludedIndex
-					rf.matchIndex[server] = len(logs) + lastIncludedIndex
+				if (nextIndex[server] <= lastIncludedIndex) { // send snapshot
+					args := SnapshotArgs{
+						Term: term,
+						Snapshots: snapshots,
+						Logs: logs,
+						LastIncludedIndex: lastIncludedIndex,
+						LastIncludedTerm: lastIncludedTerm,
+					}
+					reply := SnapshotReply{}
+					Debug(dSnap, "S%d send snapshot -> S%d", leaderId, server)
+					Debug(dSnap, "S%d nextIndex[%d] lastIncludedIndex ", leaderId, server, lastIncludedIndex)
+					ok := rf.sendInstallSnapshot(server, &args, &reply)
+					if !ok {
+						return 
+					}	
+					rf.mu.Lock()
+					defer rf.mu.Unlock()
+					if rf.role != Leader || rf.currentTerm != term {
+						return 
+					}
+					if (reply.Term < rf.currentTerm) {
+						return 
+					}
+					if (reply.Term > rf.currentTerm) {
+						rf.currentTerm = reply.Term
+						rf.votedFor = -1
+						rf.persist()
+						rf.role = Follower
+						return
+					}
+					rf.nextIndex[server] = lastIncludedIndex + 1 + len(logs)
+					rf.matchIndex[server] = lastIncludedIndex + len(logs)
 					Debug(dLeader, "S%d [Leader] nextindex[%d]: %d", rf.me, server, rf.nextIndex[server], server)
 					Debug(dLeader, "S%d [Leader] matchIndex[%d]: %d", rf.me, server, rf.matchIndex[server], server)
 					rf.updateCommitIndex()
 					if (rf.lastApplied < rf.commitIndex) {
 						rf.cv.Signal()
 					}
-				} else if reply.Term > rf.currentTerm {  // outdate leader 
-					rf.currentTerm = reply.Term
-					rf.votedFor = -1
-					rf.persist()
-					rf.role = Follower
-					Debug(dRole, "S%d [Leader] -> Follower, append entry reply from S%d, term becomes %d", rf.me, server, reply.Term)
-				} else { // reply.accept == false && reply.Term <= rf.current
-					Debug(dInfo, "S%d not accept, xterm: %d xindex: %d xlen: %d", server, reply.Xterm, reply.Xindex, reply.Xlen)
-					if reply.Xterm == -1 {
-						rf.nextIndex[server] = reply.Xlen + 1
-					} else {
-						xTerm := reply.Xterm
-						index := reply.Xindex
-						for i := args.PrevLogIndex - 1; i >= 0; i-- { 	// 
-							if rf.logs[i-lastIncludedIndex].Term < xTerm {
-								break
-							}
-							if rf.logs[i-lastIncludedIndex].Term == xTerm {
-								index = i + 1
-								break
-							}
-						}
-						if (index <= rf.nextIndex[server]) {
-							rf.nextIndex[server] = index
-						} 
-						Debug(dInfo, "S%d index: %d, nextIndex[%d]: %d", rf.me, index, server, rf.nextIndex[server])
+				} else {
+					reply := AppendEntryReply{}
+					args := AppendEntryArgs{
+						Term : term,
+						LeaderId : leaderId,
+						LeaderCommitIndex : commitIndex,
 					}
-					Debug(dInfo, "S%d not accept, rf.nextIndex[%d]-->%d", server, server, rf.nextIndex[server])
-				}
-			}(i)
-		}
-	}
+
+					// has more comands to replica
+					args.PrevLogIndex = nextIndex[server] - 1
+					args.PrevLogTerm = lastIncludedTerm 
+					Debug(dInfo, "S%d to S%d prevlogIndex %d, lastIncludeIndex: %d", leaderId, server, args.PrevLogIndex, lastIncludedIndex)
+					if args.PrevLogIndex != lastIncludedIndex {
+						args.PrevLogTerm = logs[args.PrevLogIndex-1-lastIncludedIndex].Term
+					}
+					args.Logs = logs[args.PrevLogIndex-lastIncludedIndex:]
+
+					ok := rf.sendAppendEntry(server, &args, &reply)
+					if !ok {
+						// Debug(dError, "appendEntry rpc reply error")
+						return 
+					}
+
+					rf.mu.Lock()  //relock
+					defer rf.mu.Unlock()
+					if rf.role != Leader || rf.currentTerm != args.Term{
+						return 
+					}
+					if reply.Term < rf.currentTerm {
+						return 
+					}
+					Debug(dInfo, "S%d [Leader: %d] receive append reply %v from S%d ", rf.me, rf.currentTerm ,reply, server)
+					if reply.Accept {  // accept
+						rf.nextIndex[server] = len(logs) + 1 + lastIncludedIndex
+						rf.matchIndex[server] = len(logs) + lastIncludedIndex
+						Debug(dLeader, "S%d [Leader] nextindex[%d]: %d", rf.me, server, rf.nextIndex[server], server)
+						Debug(dLeader, "S%d [Leader] matchIndex[%d]: %d", rf.me, server, rf.matchIndex[server], server)
+						rf.updateCommitIndex()
+						if (rf.lastApplied < rf.commitIndex) {
+							rf.cv.Signal()
+						}
+					} else if reply.Term > rf.currentTerm {  // outdate leader 
+						rf.currentTerm = reply.Term
+						rf.votedFor = -1
+						rf.persist()
+						rf.role = Follower
+						Debug(dRole, "S%d [Leader] -> Follower, append entry reply from S%d, term becomes %d", rf.me, server, reply.Term)
+					} else { // reply.accept == false && reply.Term <= rf.current
+						Debug(dInfo, "S%d not accept, xterm: %d xindex: %d xlen: %d", server, reply.Xterm, reply.Xindex, reply.Xlen)
+						if reply.Xterm == -1 {
+							rf.nextIndex[server] = reply.Xlen + 1
+						} else {
+							xTerm := reply.Xterm
+							index := reply.Xindex
+							for i := args.PrevLogIndex - 1; i >= lastIncludedIndex; i-- { 	// 
+								if rf.logs[i-lastIncludedIndex].Term < xTerm {
+									break
+								}
+								if rf.logs[i-lastIncludedIndex].Term == xTerm {
+									index = i + 1
+									break
+								}
+							}
+							if (index <= rf.nextIndex[server]) {
+								rf.nextIndex[server] = index
+							} 
+							Debug(dInfo, "S%d index: %d, nextIndex[%d]: %d", rf.me, index, server, rf.nextIndex[server])
+						}
+						Debug(dInfo, "S%d not accept, rf.nextIndex[%d]-->%d", server, server, rf.nextIndex[server])
+					}
+				} // else
+			}(i) // go func()
+		}	// for _,_ := range 
+	}  // for not killed
 }
 //
 // the service or tester wants to create a Raft server. the ports
@@ -799,7 +903,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.applyCh = applyCh
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
-	rf.snapshots = persister.ReadSnapshot()	
+	rf.snapshots = persister.ReadSnapshot() // read latest snapshot from persister
 
 	rf.lastApplied = rf.lastIncludedIndex
 	rf.commitIndex = rf.lastApplied

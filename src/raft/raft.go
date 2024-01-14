@@ -122,6 +122,8 @@ func (rf *Raft) persist() {
 	e.Encode(rf.currentTerm)
 	e.Encode(rf.votedFor)
 	e.Encode(rf.logs)
+	e.Encode(rf.lastIncludedIndex)
+	e.Encode(rf.lastIncludedTerm)
 	// e.Encode(rf.snapshots)
 	data := w.Bytes()
 	rf.persister.SaveStateAndSnapshot(data, rf.snapshots)
@@ -142,14 +144,20 @@ func (rf *Raft) readPersist(data []byte) {
 	var term int
 	var votedFor int
 	var logs []entry	
+	var lastIncludedIndex int
+	var lastIncludedTerm int
 	if d.Decode(&term) != nil ||
 	   d.Decode(&votedFor) != nil || 
-	   d.Decode(&logs) != nil {
+	   d.Decode(&logs) != nil || 
+	   d.Decode(&lastIncludedIndex) != nil ||
+	   d.Decode(&lastIncludedTerm) != nil{
 		log.Fatalf("readPersisit error")
 	}
 	rf.currentTerm = term
 	rf.votedFor = votedFor
 	rf.logs = logs
+	rf.lastIncludedIndex = lastIncludedIndex
+	rf.lastIncludedTerm = lastIncludedTerm
 	// copy(rf.logs, logs) 使用 copy，rf.logs为空
 }
 

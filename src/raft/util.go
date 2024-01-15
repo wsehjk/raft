@@ -65,7 +65,7 @@ func init() {
 }
 
 func Debug(topic logTopic, format string, a ...interface{}) {
-	if debugVerbosity >= 1 {
+	if debugVerbosity >= 0 {
 		time := time.Since(debugStart).Microseconds()
 		time /= 100
 		prefix := fmt.Sprintf("%06d %v ", time, string(topic))
@@ -79,4 +79,11 @@ func GetTimer() int{
 	number := result.String()
 	num, _ := strconv.Atoi(number)
 	return num + 500 // [500, 800]
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

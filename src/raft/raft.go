@@ -492,10 +492,10 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 	}
 	//}
 
-	rf.commitIndex = len(rf.logs) + rf.lastIncludedIndex
-	Debug(dLog, "S%d length of log is %d", rf.me, rf.lastIncludedIndex + len(rf.logs))
-	if args.LeaderCommitIndex < rf.commitIndex {
-		rf.commitIndex = args.LeaderCommitIndex
+	lastIndex := len(rf.logs) + rf.lastIncludedIndex
+	Debug(dLog, "S%d length of log is %d", rf.me, lastIndex)
+	if args.LeaderCommitIndex > rf.commitIndex {
+		rf.commitIndex = min(lastIndex, args.LeaderCommitIndex)	
 	}
 	Debug(dInfo, "S%d AppendEntry commitIndex: %d", rf.me, rf.commitIndex)
 	if (rf.lastApplied < rf.commitIndex) {

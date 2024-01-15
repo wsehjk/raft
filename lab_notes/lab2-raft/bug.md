@@ -13,16 +13,6 @@
  	 	1. 如果reply.Term> rf.currentTerm, rf.role <- follower
  	 	2. 对于requestVote reply，查看vote数量，rf.role <- Leader
 
-
-
-![image-20231001223138948](/Users/leslie/Library/Application Support/typora-user-images/image-20231001223138948.png)
-
-![image-20231001223233034](/Users/leslie/Library/Application Support/typora-user-images/image-20231001223233034.png)
-
-![image-20231002220733767](/Users/leslie/Library/Application Support/typora-user-images/image-20231002220733767.png)
-
-
-
 ## Data race Caused by slice reference 
 
 奇怪的data race。 Leader 发送AppendEntries给 Follower, Follower访问`args.Entries[]`,复制到`rf.logs`报**data race **
@@ -48,18 +38,6 @@ Previous write at 0x00c0004fa960 by goroutine 29520:
 
 <img src="/Users/leslie/Library/Application Support/typora-user-images/image-20231006172744422.png" alt="image-20231006172744422" style="zoom:33%;" />
 
-
-
-<img src="/Users/leslie/Library/Application Support/typora-user-images/image-20231022133443088.png" alt="image-20231022133443088" style="zoom:50%;" />
-
-当节点(Leader 或者 Follower)知道 commitIndex > lastApplied，即调用apply函数
-
-1. Follower 根据appendEntries handler中 args.CommitIndex 和log大小变化 commitIndex
-2. Leader 
-
-
-
-<img src="/Users/leslie/Desktop/2B.png" alt="image-20231226085036093" style="zoom:25%;" />
 
 ## bug：apply error, servers commit different log at same index
 
@@ -259,20 +237,20 @@ apply error: server 4 apply out of order 92
 
 意思是某个index没有按顺序commit。log显示 `S4`先`apply [70, 91]`之前的`log`， 然后`[92, 93]`之前的`log`也在commit，导致顺序错乱。看具体的代码
 
-```c++
+```go
 // rf.apply
 logs := []entry{}
 logs = append(logs, rf.logs...)
 go func(beg, end int) {
-		for beg < end { // apply
-			msg := ApplyMsg{
-				CommandValid: true,
-				Command: logs[beg].Command,
-				CommandIndex: beg + 1, // 偏移 1 位
-			}
-			Debug(dCommit, "S%d apply command %v at index %d", rf.me, msg.Command, msg.CommandIndex);
-			rf.applyCh <- msg
-			beg ++
+	for beg < end { // apply
+		msg := ApplyMsg{
+			CommandValid: true,
+			Command: logs[beg].Command,
+			CommandIndex: beg + 1, // 偏移 1 位
+		}
+		Debug(dCommit, "S%d apply command %v at index %d", rf.me, msg.Command, msg.CommandIndex);
+		rf.applyCh <- msg
+		beg ++
 	}
 }(rf.lastApplied, rf.commitIndex)
 rf.lastApplied = rf.commitIndex
@@ -283,26 +261,17 @@ rf.lastApplied = rf.commitIndex
 ```c++
 // rf.apply()
 for rf.lastApplied < rf.commitIndex { // apply
-			msg := ApplyMsg{
-				CommandValid: true,
-				Command: logs[rf.lastApplied].Command,
-				CommandIndex: rf.lastApplied + 1, // 偏移 1 位
-			}
-			Debug(dCommit, "S%d apply command %v at index %d end is %d", rf.me, msg.Command, msg.CommandIndex, rf.commitIndex);
-			rf.applyCh <- msg
-			rf.lastApplied ++
+	msg := ApplyMsg{
+		CommandValid: true,
+		Command: logs[rf.lastApplied].Command,
+		CommandIndex: rf.lastApplied + 1, // 偏移 1 位
+	}
+	Debug(dCommit, "S%d apply command %v at index %d end is %d", rf.me, msg.Command, msg.CommandIndex, rf.commitIndex);
+	rf.applyCh <- msg
+	rf.lastApplied ++
 }
 ```
 
-
-
-<img src="/Users/leslie/Library/Application Support/typora-user-images/image-20231228005302185.png" alt="image-20231228005302185" style="zoom:33%;" />
-
-<img src="/Users/leslie/Library/Application Support/typora-user-images/image-20231228170109406.png" alt="image-20231228170109406" style="zoom:33%;" />
-
-<img src="/Users/leslie/Desktop/76c7cdf08197f10620a6997a5cda2590.png" alt="76c7cdf08197f10620a6997a5cda2590" style="zoom:33%;" />
-
-<img src="/Users/leslie/Library/Application Support/typora-user-images/image-20240103180632319.png" alt="image-20240103180632319" style="zoom:33%;" />
 
 ## bug: servers commit different command at same index 
 
@@ -427,11 +396,7 @@ Error Log says that even in steady state (no crash, no disconnection), servers f
 
 >The nextIndex change for a lagging peer end up in a dead loop. This causes servers fail to reach agreemnt in 10s;  if follower's log and leader's log diverge across multiple terms, then follower will return multiple appendentry with false, leader's nextindex shouldn't become larger or previously recorded value, which could lead to a dead loop. 
 
-
-
-
-
-## bug: index out of range 
+## bug: index out of range I
 
 a weird index error.
 
@@ -505,3 +470,75 @@ Procedures that cause this bug
 > 
 
 `S0` attempts to become a leader at term 23, `S2` votes for `S0`, `S0` is elected as leader at term 23 and send heartbeats to followers. In this heartbeat args, the code doesn't set the `CommitIndex`, which is 0 by default. This explains why `S2` commitIndex become 0.  `S1` receives vote request from `S0` and increments its term to 23. Then immediately, `ticker` goroutine gets scheduled and `S0` initiates a leader election at term 24, causing `S0` and `S1` to be follower at term 24. Then `S2` elected as leader at term 25.
+
+## bug: index out of range II
+Cross into another index error with similar error log as above
+> 176165 CMIT S2 updateCommitIndex rf.commitIndex is 78
+> 
+> 176166 CMIT S2 updatecommitIndex i: 78, lastIncludedIndex: 79
+> 
+> panic: runtime error: index out of range [-1]
+
+Case:
+
+<div align = center> 
+<img src="../images/pic1.png" 
+	width = "50%" /> 
+</div>
+
+> `S2` is a leader at term 7, last log index 79, last applied index and last commit index 79.
+>
+> Before `S2` sends an appendentry rpc to tell `S1` to apply command at index 79, `S0` is reconnected and intiates a leader election at term 8. 
+>
+> Before `S2` sends an appendentry rpc to tell `S1` to apply command at index 79, `S0` is reconnected and intiates a leader election at term 8. 
+>
+> `S2` and `S1` receives voteRequest rpc and turns into a Follower at term 8. 
+>
+> For its shorter log, `S0` won't be elected as leader at term 8. 
+>
+> Then `S1` attempts to be the leader at term 9 for the vote from `S2`. `S1` sends heartbeats to `S2` with LeaderCommitIndex being 78. 
+>
+> At the same time, `S0` receives voterequest from `S1` and turns into a Follower at term 9. 
+>
+> Before `S0` votes for `S1` and reset its timer, `ticker` waken up and `S0`
+>
+> `S0` requests to be a leader at term 10 and turns `S1` and `S2` into follower at term 10. Again `S0` won't success
+```bash
+168419 TIMR S1 time reduced to -1
+168422 TIMR S1 reset time: 730
+168422 VOTE S1 request votes at term 9
+168430 ROLE S0 becomes Follower, term: 8 --> 9 # get request vote 
+168493 TIMR S2 time reduced to 19
+168559 ROLE S2 --> Follower at Term 9
+168560 VOTE S2 votes for S1, reset time: 794
+168562 ROLE S1 becomes Leader, gets 2 votes, at term 9
+168607 TIMR S0 time reduced to -6
+168609 TIMR S0 reset time: 749
+168609 VOTE S0 request votes at term 10
+168727 ROLE S1 --> Follower at Term 10
+168790 LOG1 S2 term 9 receive append entry from S1, term 9
+168791 ROLE S2 ---> follower after receive append entry from valid Leader
+168791 TIMR S2 reset time: 650
+168793 LOG1 S2 length of log is 79
+168793 INFO S2 AppendEntry commitIndex: 78
+```
+8. Later, `S2` attempts to be a leader at term 11 with incorrect commitIndex 78.
+
+These two index errors make wander there may be logic errors when dealing Follower's commitIndex. I turn to paper's Figure2. Figure2 says that `If leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry)`. Well, this explains everything. My orginal imp just set `commitIndex = min(leaderCommit, index of last new entry)`. 
+```go
+rf.commitIndex = len(rf.logs) + rf.lastIncludedIndex
+if args.LeaderCommitIndex < rf.commitIndex {
+	rf.commitIndex = args.LeaderCommitIndex
+}
+```
+
+So correct handle should be
+```go
+lastIndex := len(rf.logs) + rf.lastIncludedIndex
+if args.LeaderCommitIndex > rf.commitIndex {
+	rf.commitIndex = min(lastIndex, args.LeaderCommitIndex)	
+}
+```
+This case denotes that it's possible for leader's commitIndex smaller than follower's
+
+## four way deadlock 

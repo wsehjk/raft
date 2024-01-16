@@ -13,37 +13,13 @@
  	 	1. 如果reply.Term> rf.currentTerm, rf.role <- follower
  	 	2. 对于requestVote reply，查看vote数量，rf.role <- Leader
 
-## Data race Caused by slice reference 
-
-奇怪的data race。 Leader 发送AppendEntries给 Follower, Follower访问`args.Entries[]`,复制到`rf.logs`报**data race **
-
-```
-WARNING: DATA RACE
-Read at 0x00c0004fa960 by goroutine 29525:
-  _/Users/leslie/Documents/courses/6.824/src/raft.(*Raft).toker.func1()
-      /Users/leslie/Documents/courses/6.824/src/raft/raft.go:510 +0x391
-
-Previous write at 0x00c0004fa960 by goroutine 29520:
-  _/Users/leslie/Documents/courses/6.824/src/raft.(*Raft).AppendEntries()
-      /Users/leslie/Documents/courses/6.824/src/raft/raft.go:279 +0x9bb
-```
-
-<img src="/Users/leslie/Library/Application Support/typora-user-images/image-20231006171932507.png" alt="image-20231006171932507" style="zoom:33%;" />
-
-510行代码为访问`logs`获得 `args.PrevLogTerm`, 而`logs := rf.logs`
-
-<img src="/Users/leslie/Library/Application Support/typora-user-images/image-20231006172457586.png" alt="image-20231006172457586" style="zoom:25%;" />
-
-279行代码为访问args.Entries, 
-
-<img src="/Users/leslie/Library/Application Support/typora-user-images/image-20231006172744422.png" alt="image-20231006172744422" style="zoom:33%;" />
-
-
 ## bug：apply error, servers commit different log at same index
 
 五个节点, s1为Leader，并且收到client cmd(1:7525), 将log 发送给followers, s0 和s3接收到log， 返回True。Leader s1随即commit 此log。s1节点断开，s2节点 增加term为2，并且发起投票，debug log 显示s0 向s2投票。这显然不对。RAFT 通过选举限制 保证每个term中的新leader 一定包含之前的term中 committed log。
 
-<img src="/Users/leslie/Library/Application Support/typora-user-images/image-20231023202614557.png" alt="image-20231023202614557" style="zoom:50%;" />
+<div align = center>
+<img src="../images/image-20231023202614557.png" alt="image-20231023202614557" style="zoom:40%;"/>
+<div>
 
 我在发送requestVote请求时，先将lastLogTerm 设为节点currentTerm(在这个context下 为2)，再检查是否有lastLogIndex >= 1;
 
@@ -483,12 +459,10 @@ Case:
 
 <div align = center> 
 <img src="../images/pic1.png" 
-	width = "50%" /> 
+	width = "40%" /> 
 </div>
 
 > `S2` is a leader at term 7, last log index 79, last applied index and last commit index 79.
->
-> Before `S2` sends an appendentry rpc to tell `S1` to apply command at index 79, `S0` is reconnected and intiates a leader election at term 8. 
 >
 > Before `S2` sends an appendentry rpc to tell `S1` to apply command at index 79, `S0` is reconnected and intiates a leader election at term 8. 
 >
@@ -522,9 +496,10 @@ Case:
 168793 LOG1 S2 length of log is 79
 168793 INFO S2 AppendEntry commitIndex: 78
 ```
-8. Later, `S2` attempts to be a leader at term 11 with incorrect commitIndex 78.
+8. Later, `S2` attempts to be a leader at term 11 with **incorrect commitIndex 78**.
 
-These two index errors make wander there may be logic errors when dealing Follower's commitIndex. I turn to paper's Figure2. Figure2 says that `If leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry)`. Well, this explains everything. My orginal imp just set `commitIndex = min(leaderCommit, index of last new entry)`. 
+These two index errors make me wander there may be logic errors when dealing Follower's commitIndex. I turn to paper's Figure2, which says that `If leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry)`. Well, this explains everything. My orginal imp just sets `commitIndex = min(leaderCommit, index of last new entry)`. 
+
 ```go
 rf.commitIndex = len(rf.logs) + rf.lastIncludedIndex
 if args.LeaderCommitIndex < rf.commitIndex {
@@ -542,3 +517,4 @@ if args.LeaderCommitIndex > rf.commitIndex {
 This case denotes that it's possible for leader's commitIndex smaller than follower's
 
 ## four way deadlock 
+Doc at the bottom of [student-guide](https://thesquareplanet.com/blog/students-guide-to-raft/)

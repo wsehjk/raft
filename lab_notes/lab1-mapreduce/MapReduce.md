@@ -36,8 +36,3 @@ Server 收到任务完成信息 进行处理
 启动master的进程要检查任务是否完成
 
 - 调用done函数，done函数检查reduce task任务是否都完成
-
-
-
-![image-20230708173415618](/Users/leslie/Library/Application Support/typora-user-images/image-20230708173415618.png)
-

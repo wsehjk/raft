@@ -59,7 +59,7 @@ const (
 	HeartbeatInterval = 100  //ms 
 ) 
 
-type entry struct {
+type Entry struct {
 	Term int
 	Command interface{}
 } 
@@ -79,7 +79,7 @@ type Raft struct {
 	// state a Raft server must maintain.
 	votedFor int
 	currentTerm int
-	logs []entry
+	logs []Entry
 
 	role string
 	timer int
@@ -143,7 +143,7 @@ func (rf *Raft) readPersist(data []byte) {
 	d := labgob.NewDecoder(r)
 	var term int
 	var votedFor int
-	var logs []entry	
+	var logs []Entry	
 	var lastIncludedIndex int
 	var lastIncludedTerm int
 	if d.Decode(&term) != nil ||
@@ -183,7 +183,7 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	rf.lastIncludedTerm = rf.logs[index - rf.lastIncludedIndex - 1].Term
-	logs := []entry{}
+	logs := []Entry{}
 	logs = append(logs, rf.logs[index-rf.lastIncludedIndex : ]...)
 	rf.logs = logs
 	rf.lastIncludedIndex = index
@@ -195,7 +195,7 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 
 type SnapshotArgs struct {
 	Snapshots []byte
-	Logs []entry
+	Logs []Entry
 	LastIncludedIndex int
 	LastIncludedTerm int
 	Term int // leader's term	
@@ -377,7 +377,7 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 type AppendEntryArgs struct {
 	Term int
 	LeaderId int
-	Logs []entry
+	Logs []Entry
 	PrevLogIndex int
 	PrevLogTerm  int
 	LeaderCommitIndex int
@@ -472,7 +472,7 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 		i += 1 
 		j += 1
 	}
-	logs := []entry{}
+	logs := []Entry{}
 	logs = append(logs, rf.logs[0:i-rf.lastIncludedIndex]...)
 	logs = append(logs, args.Logs[j:]...)
 	if len(logs) >= len(rf.logs) {
@@ -535,7 +535,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	term = rf.currentTerm
 	isLeader = rf.role == Leader
 	if isLeader {
-		log := entry{
+		log := Entry{
 			Term: rf.currentTerm,
 			Command: command,
 		}
@@ -619,7 +619,7 @@ func (rf *Raft) apply() {
 		end := rf.commitIndex
 		Debug(dInfo, "S%d in apply(), lastapplied %d commitIndex %d", rf.me, rf.lastApplied, rf.commitIndex)
 		lastIncludedIndex := rf.lastIncludedIndex
-		logs := []entry{}
+		logs := []Entry{}
 		// copy(logs, rf.logs)
 		logs = append(logs, rf.logs...)
 		rf.lastApplied = rf.commitIndex
@@ -767,7 +767,7 @@ func (rf *Raft) applier() {
 		}
 		// only leader allowed to send appen entries, though maybe outdated 
 		// send append entries or heartbeats 
-		logs := make([]entry, len(rf.logs))   // read only
+		logs := make([]Entry, len(rf.logs))   // read only
 		copy(logs, rf.logs)
 		nextIndex := make([]int, len(rf.nextIndex))
 		copy(nextIndex, rf.nextIndex)		  // read only 

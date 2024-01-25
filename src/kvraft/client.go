@@ -4,10 +4,11 @@ import "6.824/labrpc"
 import "crypto/rand"
 import "math/big"
 
-
 type Clerk struct {
 	servers []*labrpc.ClientEnd
 	// You will have to modify this struct.
+	clientId int64
+	nextSerialNumber int
 }
 
 func nrand() int64 {
@@ -21,6 +22,10 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
 	// You'll have to add code here.
+	ck.nextSerialNumber = 0
+	n,_ := rand.Int(rand.Reader, big.NewInt(100000000))
+	ck.clientId = n.Int64()
+
 	return ck
 }
 
@@ -37,8 +42,18 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 // arguments. and reply must be passed as a pointer.
 //
 func (ck *Clerk) Get(key string) string {
-
 	// You will have to modify this function.
+	for i,_ := range ck.servers {
+		args := GetArgs {
+			Key: key,
+			Op: GET,
+		}
+		reply := GetReply{}
+		ok := ck.servers[i].Call("KVServer.Get", &args, &reply)
+		if ok && reply.Err == OK {
+			return reply.Value
+		}
+	}
 	return ""
 }
 
@@ -54,11 +69,22 @@ func (ck *Clerk) Get(key string) string {
 //
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 	// You will have to modify this function.
+	for i,_ := range ck.servers {
+		args := GetArgs {
+			Key: key,
+			Op: op,
+		}
+		reply := GetReply{}
+		ok := ck.servers[i].Call("KVServer.PutAppend", &args, &reply)
+		if ok && reply.Err == OK {
+			return 
+		}
+	}
 }
 
 func (ck *Clerk) Put(key string, value string) {
-	ck.PutAppend(key, value, "Put")
+	ck.PutAppend(key, value, PUT)
 }
 func (ck *Clerk) Append(key string, value string) {
-	ck.PutAppend(key, value, "Append")
+	ck.PutAppend(key, value, APP)
 }

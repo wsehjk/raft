@@ -3,11 +3,13 @@ package kvraft
 import "6.824/labrpc"
 import "crypto/rand"
 import "math/big"
+import "sync"
 
 type Clerk struct {
 	servers []*labrpc.ClientEnd
 	// You will have to modify this struct.
 	clientId int64
+	mu sync.Mutex
 	nextSerialNumber int
 }
 
@@ -23,8 +25,7 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck.servers = servers
 	// You'll have to add code here.
 	ck.nextSerialNumber = 0
-	n,_ := rand.Int(rand.Reader, big.NewInt(100000000))
-	ck.clientId = n.Int64()
+	ck.clientId = nrand() // 随机生成一个clientId
 
 	return ck
 }
@@ -43,10 +44,16 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 //
 func (ck *Clerk) Get(key string) string {
 	// You will have to modify this function.
+	ck.mu.Lock()
+	seq := ck.nextSerialNumber
+	ck.nextSerialNumber ++
+	ck.mu.Unlock()
 	for i,_ := range ck.servers {
 		args := GetArgs {
 			Key: key,
 			Op: GET,
+			SerialNumber: seq,
+			ClientId: ck.clientId,
 		}
 		reply := GetReply{}
 		ok := ck.servers[i].Call("KVServer.Get", &args, &reply)
@@ -69,10 +76,16 @@ func (ck *Clerk) Get(key string) string {
 //
 func (ck *Clerk) PutAppend(key string, value string, op string) {
 	// You will have to modify this function.
+	ck.mu.Lock()
+	seq := ck.nextSerialNumber
+	ck.nextSerialNumber ++
+	ck.mu.Unlock()
 	for i,_ := range ck.servers {
 		args := GetArgs {
 			Key: key,
 			Op: op,
+			SerialNumber: seq,
+			ClientId: ck.clientId,
 		}
 		reply := GetReply{}
 		ok := ck.servers[i].Call("KVServer.PutAppend", &args, &reply)

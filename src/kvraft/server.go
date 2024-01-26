@@ -26,7 +26,8 @@ type Op struct {
 	Operation string
 	Key string 
 	Value string
-	ClientId int
+	// record this command's client and serialnumber avoid re-executing same command
+	ClientId int64 
 	SerialNumber int
 }
 
@@ -43,8 +44,9 @@ type KVServer struct {
 	persister *raft.Persister   // Object to hold this peer's persisted state
 	// Your definitions here.
 	data map[string]string
-	logs []raft.Entry
+	logs []raft.Entry //这里本可以只记录 command, 不记录term。但是考虑 maxraftstate, ApplyMsg需要传递 term
 	snapshotIndex int
+	client map[int64]int    // record latestserial number of client's command
 }
 
 
@@ -59,24 +61,23 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	cmd := Op{
 		Operation: args.Op,
 		Key: args.Key,
+		ClientId: args.ClientId,
+		SerialNumber: args.SerialNumber,
 	}
 	kv.rf.Start(cmd)
-	return 
+	 
 }
-
+// 多个client调用，也都有多个 PutAppend handler运行
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
-	_, isLeader := kv.rf.GetState()
-	if isLeader == false {
-		reply.Err = ErrWrongLeader
-		return 
-	}
 	cmd := Op{
 		Operation: args.Op,
 		Key: args.Key,
 		Value: args.Value,
+		ClientId: args.ClientId,
+		SerialNumber: args.SerialNumber,
 	}
-	index, term, isLeader := kv.rf.Start(cmd)
+	_, _, isLeader := kv.rf.Start(cmd)
 	if isLeader == false {
 		reply.Err = ErrWrongLeader
 	}
@@ -93,9 +94,12 @@ func (kv *KVServer) ReadApply() {
 	for !kv.killed(){
 		msg := <- kv.applyCh
 		if msg.CommandValid {
-			var op Op;
-			op = msg.Command.(Op)
-
+			ent := raft.Entry {
+				Command: msg.Command,
+				Term: msg.CommandTerm,
+			}
+			kv.logs = append(kv.logs, ent)
+			kv.cv.Broadcast() //wake up all rpc handlers that are waiting for committed commands 
 		}
 		if msg.SnapshotValid {
 			kv.DecodeSnapShot(msg.Snapshot)
@@ -145,8 +149,8 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv := new(KVServer)
 	kv.me = me
 	kv.maxraftstate = maxraftstate
-	kv.cv = sync.Cond{
-		L: &kv.mu,	
+	kv.cv = sync.Cond {
+		L: &kv.mu,
 	}
 
 	// You may need initialization code here.

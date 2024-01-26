@@ -22,7 +22,7 @@ type PutAppendArgs struct {
 	// You'll have to add definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
-	ClientId int
+	ClientId int64
 	SerialNumber int
 }
 
@@ -34,7 +34,7 @@ type GetArgs struct {
 	Key string
 	// You'll have to add definitions here.
 	Op string  // Get
-	ClientId int
+	ClientId int64
 	SerialNumber int
 }
 

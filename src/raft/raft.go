@@ -43,6 +43,7 @@ import (
 type ApplyMsg struct {
 	CommandValid bool
 	Command      interface{}
+	CommandTerm  int 
 	CommandIndex int
 
 	// For 2D:
@@ -183,13 +184,14 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	rf.lastIncludedTerm = rf.logs[index - rf.lastIncludedIndex - 1].Term
-	logs := []Entry{}
+	logs := []Entry{}	// 是否需要再复制一份
 	logs = append(logs, rf.logs[index-rf.lastIncludedIndex : ]...)
 	rf.logs = logs
 	rf.lastIncludedIndex = index
 	rf.snapshots = snapshot
 	Debug(dSnap, "S%d lastIncludedTerm:%d, lastIncludedIndex: %d", rf.me, rf.lastIncludedTerm, rf.lastIncludedIndex)
 	Debug(dSnap, "S%d log becomes %v", rf.me, rf.logs)
+	// 是否需要提前解锁
 	rf.persist()
 }
 
@@ -632,6 +634,7 @@ func (rf *Raft) apply() {
 			msg := ApplyMsg{
 				CommandValid: true,
 				Command: logs[beg - lastIncludedIndex].Command,
+				CommandTerm: logs[beg - lastIncludedIndex].Term,
 				CommandIndex: beg + 1, // 偏移 1 位
 			}
 			Debug(dCommit, "S%d apply command %v at index %d end is %d", rf.me, msg.Command, msg.CommandIndex, end);

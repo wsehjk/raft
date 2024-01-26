@@ -53,7 +53,7 @@ type KVServer struct {
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
 	_, isLeader := kv.rf.GetState()
-	if isLeader == false {
+	if !isLeader{
 		reply.Err = ErrWrongLeader
 		return 
 	}
@@ -78,10 +78,9 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		SerialNumber: args.SerialNumber,
 	}
 	_, _, isLeader := kv.rf.Start(cmd)
-	if isLeader == false {
+	if !isLeader {
 		reply.Err = ErrWrongLeader
 	}
-	return 
 }
 
 func (kv *KVServer) DecodeSnapShot(snapshot []byte) {
@@ -99,7 +98,7 @@ func (kv *KVServer) ReadApply() {
 				Term: msg.CommandTerm,
 			}
 			kv.logs = append(kv.logs, ent)
-			kv.cv.Broadcast() //wake up all rpc handlers that are waiting for committed commands 
+			kv.cv.Broadcast() //wake up all rpc handlers waiting for committed commands 
 		}
 		if msg.SnapshotValid {
 			kv.DecodeSnapShot(msg.Snapshot)

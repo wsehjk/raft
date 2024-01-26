@@ -23,6 +23,7 @@ import (
 type logTopic string
 const (
 	dClient  logTopic = "CLNT"
+	dServer  logTopic = "SERV"
 	dCommit  logTopic = "CMIT"
 	dDrop    logTopic = "DROP"
 	dError   logTopic = "ERRO"
@@ -60,7 +61,7 @@ var debugVerbosity int
 func init() {
 	debugVerbosity = getVerbosity()
 	debugStart = time.Now()
-
+	 // or -> xor -> and 将 Ldate 和 Ltime标志去除
 	log.SetFlags(log.Flags() &^ (log.Ldate | log.Ltime))
 }
 

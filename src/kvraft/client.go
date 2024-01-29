@@ -48,7 +48,7 @@ func (ck *Clerk) Get(key string) string {
 	seq := ck.nextSerialNumber
 	ck.nextSerialNumber ++
 	ck.mu.Unlock()
-	for i,_ := range ck.servers {
+	for i := range ck.servers {
 		args := GetArgs {
 			Key: key,
 			Op: GET,
@@ -59,6 +59,9 @@ func (ck *Clerk) Get(key string) string {
 		ok := ck.servers[i].Call("KVServer.Get", &args, &reply)
 		if ok && reply.Err == OK {
 			return reply.Value
+		} 
+		if ok && reply.Err == ErrTimeOut {
+			continue
 		}
 	}
 	return ""
@@ -80,7 +83,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	seq := ck.nextSerialNumber
 	ck.nextSerialNumber ++
 	ck.mu.Unlock()
-	for i,_ := range ck.servers {
+	for i := range ck.servers {
 		args := GetArgs {
 			Key: key,
 			Op: op,
@@ -91,6 +94,9 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		ok := ck.servers[i].Call("KVServer.PutAppend", &args, &reply)
 		if ok && reply.Err == OK {
 			return 
+		}
+		if ok && reply.Err == ErrTimeOut {
+			continue
 		}
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"strconv"
 
 	"6.824/labgob"
 	"6.824/labrpc"
@@ -34,6 +35,16 @@ type Op struct {
 	SerialNumber int
 }
 
+func (op *Op)String() string{
+	var str string
+	str = str + "Operation: " + op.Operation
+	str = str + " Key: " + op.Key
+	str = str + " Value: " + op.Value
+	str = str + " ClientId: " + strconv.FormatInt(op.ClientId, 10)
+	str = str + " SerialNumber: " + strconv.Itoa(op.SerialNumber)
+	return str
+}
+
 type KVServer struct {
 	mu      sync.Mutex
 	me      int
@@ -50,16 +61,16 @@ type KVServer struct {
 	commands []raft.Entry 	//这里本可以只记录 command, 不记录term。但是考虑 maxraftstate, ApplyMsg需要传递 term
 	snapshotIndex int
 	client map[int64]int    // record latestserial number of client's command
-	nextCommandIndex int 	// point to the command to be executed 
+	// nextCommandIndex int 	// point to the command to be executed 
 }
 
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
 	cmd := Op{
-		Operation: args.Op,
 		Key: args.Key,
 		ClientId: args.ClientId,
+		Operation: args.Op,
 		SerialNumber: args.SerialNumber,
 	}
 	_, _, isLeader := kv.rf.Start(cmd)
@@ -79,6 +90,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 		} 
 		reply.Err = OK
 		reply.Value = kv.data[cmd.Key]
+		kv.cv.L.Unlock()
 		return 
 	}
 	reply.Err = ErrTimeOut
@@ -88,10 +100,10 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
 	cmd := Op{
-		Operation: args.Op,
 		Key: args.Key,
 		Value: args.Value,
 		ClientId: args.ClientId,
+		Operation: args.Op,
 		SerialNumber: args.SerialNumber,
 	}
 	_, _, isLeader := kv.rf.Start(cmd)
@@ -108,6 +120,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 			continue
 		} 
 		reply.Err = OK
+		kv.cv.L.Unlock()
 		return 
 	}
 	reply.Err = ErrTimeOut
@@ -123,6 +136,8 @@ func (kv *KVServer) Execute(cmd Op) {
 	kv.client[clientId] = seqNumber
 	key := cmd.Key
 	value := cmd.Value
+	raft.Debug(raft.DServer, "S%d execute %v", kv.me, cmd)
+	raft.Debug(raft.DServer, "S%d client:%d seqNumber --> %v", kv.me, clientId, seqNumber)
 	switch cmd.Operation{
 	case GET:	// do nothing 
 		return 
@@ -132,24 +147,27 @@ func (kv *KVServer) Execute(cmd Op) {
 		kv.data[key] = value
 	}
 }
+
 func (kv *KVServer) DecodeSnapShot(snapshot []byte) {
 
 }
 // 请问下， lab3 我思路不清，我觉得底层的raft提供一个正确的抽象，那么lab3的问题就是
 // server如何处理和client，raft的交互，server接收到一个命令，调用raft.Start(), 
 // server 不能保证 这个命令之后会出现在Applych里，那server什么时候回复client呢
+
+// go routine, read committed msgs from applyCh
 func (kv *KVServer) ReadApply() {
-	for !kv.killed(){
+	for !kv.killed() {
 		msg := <- kv.applyCh
 		if msg.CommandValid {
 			ent := raft.Entry {
 				Command: msg.Command,
 				Term: msg.CommandTerm,
 			}
-			kv.commands = append(kv.commands, ent) // record commands to be executed 
 			kv.Execute(ent.Command.(Op))	// 执行命令，
+			kv.commands = append(kv.commands, ent)// record commands that have been executed 
 			if _, isLeader := kv.rf.GetState(); isLeader {
-				kv.cv.Broadcast() //wake up all
+				kv.cv.Broadcast() // Leader Node wake up all
 			}
 		} else if msg.SnapshotValid {
 			kv.DecodeSnapShot(msg.Snapshot)

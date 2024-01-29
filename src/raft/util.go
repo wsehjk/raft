@@ -22,8 +22,8 @@ import (
 
 type logTopic string
 const (
-	dClient  logTopic = "CLNT"
-	dServer  logTopic = "SERV"
+	DClient  logTopic = "CLNT"
+	DServer  logTopic = "SERV"
 	dCommit  logTopic = "CMIT"
 	dDrop    logTopic = "DROP"
 	dError   logTopic = "ERRO"
@@ -34,7 +34,7 @@ const (
 	dPersist logTopic = "PERS"
 	dSnap    logTopic = "SNAP"
 	dTerm    logTopic = "TERM"
-	dTest    logTopic = "TEST"
+	DTest    logTopic = "TEST"
 	dTimer   logTopic = "TIMR"
 	dTrace   logTopic = "TRCE"
 	dVote    logTopic = "VOTE"

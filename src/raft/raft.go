@@ -612,7 +612,7 @@ func (rf *Raft) apply() {
 	for !rf.killed() {
 		rf.cv.L.Lock()
 		if (rf.lastApplied == rf.commitIndex) {
-			rf.cv.Wait()
+			rf.cv.Wait() // 
 		}
 		beg := rf.lastApplied
 		if beg == 0 {
@@ -622,9 +622,9 @@ func (rf *Raft) apply() {
 		Debug(dInfo, "S%d in apply(), lastapplied %d commitIndex %d", rf.me, rf.lastApplied, rf.commitIndex)
 		lastIncludedIndex := rf.lastIncludedIndex
 		logs := []Entry{}
-		// copy(logs, rf.logs)
+
 		logs = append(logs, rf.logs...)
-		rf.lastApplied = rf.commitIndex
+		rf.lastApplied = rf.commitIndex  // 提前设置 lastApplied
 		rf.cv.L.Unlock()
 		for beg < end { 	// apply
 			if beg == 0 {

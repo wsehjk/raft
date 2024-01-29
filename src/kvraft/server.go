@@ -1,12 +1,14 @@
 package kvraft
 
 import (
-	"6.824/labgob"
-	"6.824/labrpc"
-	"6.824/raft"
 	"log"
 	"sync"
 	"sync/atomic"
+	"time"
+
+	"6.824/labgob"
+	"6.824/labrpc"
+	"6.824/raft"
 )
 
 const Debug = false
@@ -26,8 +28,9 @@ type Op struct {
 	Operation string
 	Key string 
 	Value string
-	// record this command's client and serialnumber avoid re-executing same command
-	ClientId int64 
+	// record this command's client and serialnumber 
+	// to avoid re-executing same command that response **timeout**
+	ClientId int64
 	SerialNumber int
 }
 
@@ -44,28 +47,42 @@ type KVServer struct {
 	persister *raft.Persister   // Object to hold this peer's persisted state
 	// Your definitions here.
 	data map[string]string
-	logs []raft.Entry //这里本可以只记录 command, 不记录term。但是考虑 maxraftstate, ApplyMsg需要传递 term
+	commands []raft.Entry 	//这里本可以只记录 command, 不记录term。但是考虑 maxraftstate, ApplyMsg需要传递 term
 	snapshotIndex int
 	client map[int64]int    // record latestserial number of client's command
+	nextCommandIndex int 	// point to the command to be executed 
 }
 
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
-	_, isLeader := kv.rf.GetState()
-	if !isLeader{
-		reply.Err = ErrWrongLeader
-		return 
-	}
-
 	cmd := Op{
 		Operation: args.Op,
 		Key: args.Key,
 		ClientId: args.ClientId,
 		SerialNumber: args.SerialNumber,
 	}
-	kv.rf.Start(cmd)
-	 
+	_, _, isLeader := kv.rf.Start(cmd)
+	if !isLeader {
+		reply.Err = ErrWrongLeader
+	}
+	kv.cv.L.Lock()
+	// wait for apply message 
+	beg := time.Now()
+	for time.Since(beg).Milliseconds() < 1000 { //  wait 1000 ms
+		kv.cv.Wait()
+		// check whether command appears in applyCh
+		kv.cv.Wait()
+		length := kv.snapshotIndex + len(kv.commands)
+		if kv.commands[length-1].Command.(Op) != cmd {
+			continue
+		} 
+		reply.Err = OK
+		reply.Value = kv.data[cmd.Key]
+		return 
+	}
+	reply.Err = ErrTimeOut
+	kv.cv.L.Unlock()
 }
 // 多个client调用，也都有多个 PutAppend handler运行
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
@@ -81,8 +98,40 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	if !isLeader {
 		reply.Err = ErrWrongLeader
 	}
+	// wait for apply message 
+	kv.cv.L.Lock()
+	beg := time.Now()
+	for time.Since(beg).Milliseconds() < 1000 { //  wait 1000 ms
+		kv.cv.Wait()
+		length := kv.snapshotIndex + len(kv.commands)
+		if kv.commands[length-1].Command.(Op) != cmd {
+			continue
+		} 
+		reply.Err = OK
+		return 
+	}
+	reply.Err = ErrTimeOut
+	kv.cv.L.Unlock()
 }
 
+func (kv *KVServer) Execute(cmd Op) {
+	clientId := cmd.ClientId
+	seqNumber := cmd.SerialNumber
+	if seqNumber <= kv.client[clientId] { // 判断可能的重复命令
+		return 
+	}
+	kv.client[clientId] = seqNumber
+	key := cmd.Key
+	value := cmd.Value
+	switch cmd.Operation{
+	case GET:	// do nothing 
+		return 
+	case PUT:	//
+		kv.data[key] = value
+	case APP: 	//
+		kv.data[key] = value
+	}
+}
 func (kv *KVServer) DecodeSnapShot(snapshot []byte) {
 
 }
@@ -97,11 +146,14 @@ func (kv *KVServer) ReadApply() {
 				Command: msg.Command,
 				Term: msg.CommandTerm,
 			}
-			kv.logs = append(kv.logs, ent)
-			kv.cv.Broadcast() //wake up all rpc handlers waiting for committed commands 
-		}
-		if msg.SnapshotValid {
+			kv.commands = append(kv.commands, ent) // record commands to be executed 
+			kv.Execute(ent.Command.(Op))	// 执行命令，
+			if _, isLeader := kv.rf.GetState(); isLeader {
+				kv.cv.Broadcast() //wake up all
+			}
+		} else if msg.SnapshotValid {
 			kv.DecodeSnapShot(msg.Snapshot)
+			kv.snapshotIndex = msg.SnapshotIndex
 		}
 	}
 }

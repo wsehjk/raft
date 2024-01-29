@@ -21,6 +21,6 @@ then
 fi
 
 GetTestCase $3
-command="python3 dstest.py -r -p $1 -n $2 $test"
+command="python3 ../dstest.py -r -p $1 -n $2 $test"
 echo "$command"
 $command

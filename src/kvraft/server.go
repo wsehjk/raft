@@ -37,11 +37,11 @@ type Op struct {
 
 func (op *Op)String() string{
 	var str string
-	str = str + "Operation: " + op.Operation
-	str = str + " Key: " + op.Key
-	str = str + " Value: " + op.Value
-	str = str + " ClientId: " + strconv.FormatInt(op.ClientId, 10)
-	str = str + " SerialNumber: " + strconv.Itoa(op.SerialNumber)
+	str = str + "CMD:{Operation: " + op.Operation
+	str = str + ", Key: " + op.Key
+	str = str + ", Value: " + op.Value
+	str = str + ", ClientId: " + strconv.FormatInt(op.ClientId, 10)
+	str = str + ", SerialNumber: " + strconv.Itoa(op.SerialNumber) + " }"
 	return str
 }
 
@@ -76,14 +76,15 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	_, _, isLeader := kv.rf.Start(cmd)
 	if !isLeader {
 		reply.Err = ErrWrongLeader
+		return 
 	}
+	raft.Debug(raft.DServer, "S%d Get called, cmd is %v", kv.me, &cmd)
 	kv.cv.L.Lock()
 	// wait for apply message 
 	beg := time.Now()
 	for time.Since(beg).Milliseconds() < 1000 { //  wait 1000 ms
 		kv.cv.Wait()
 		// check whether command appears in applyCh
-		kv.cv.Wait()
 		length := kv.snapshotIndex + len(kv.commands)
 		if kv.commands[length-1].Command.(Op) != cmd {
 			continue
@@ -109,7 +110,9 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	_, _, isLeader := kv.rf.Start(cmd)
 	if !isLeader {
 		reply.Err = ErrWrongLeader
+		return 
 	}
+	raft.Debug(raft.DServer, "S%d PutAppend called, cmd is %v", kv.me, &cmd)
 	// wait for apply message 
 	kv.cv.L.Lock()
 	beg := time.Now()
@@ -144,7 +147,8 @@ func (kv *KVServer) Execute(cmd Op) {
 	case PUT:	//
 		kv.data[key] = value
 	case APP: 	//
-		kv.data[key] = value
+		val := kv.data[key]
+		kv.data[key] = val + value
 	}
 }
 
@@ -158,14 +162,18 @@ func (kv *KVServer) DecodeSnapShot(snapshot []byte) {
 // go routine, read committed msgs from applyCh
 func (kv *KVServer) ReadApply() {
 	for !kv.killed() {
+		raft.Debug(raft.DServer, "S%d ReadApply", kv.me)
 		msg := <- kv.applyCh
+		raft.Debug(raft.DServer, "S%d receive command %v, commandValid is %v", kv.me, msg.Command.(Op), msg.CommandValid)
 		if msg.CommandValid {
 			ent := raft.Entry {
 				Command: msg.Command,
 				Term: msg.CommandTerm,
 			}
 			kv.Execute(ent.Command.(Op))	// 执行命令，
+			kv.mu.Lock()
 			kv.commands = append(kv.commands, ent)// record commands that have been executed 
+			kv.mu.Unlock()
 			if _, isLeader := kv.rf.GetState(); isLeader {
 				kv.cv.Broadcast() // Leader Node wake up all
 			}
@@ -224,13 +232,15 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 
 	// You may need initialization code here.
 
+	kv.client = make(map[int64]int)
+	kv.data = make(map[string]string)
+
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 	kv.persister = persister
 	snapshot := kv.persister.ReadSnapshot()
 	kv.DecodeSnapShot(snapshot)
 	// You may need initialization code here.
-
 	go kv.ReadApply()
 	return kv
 }

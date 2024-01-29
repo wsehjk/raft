@@ -1,5 +1,7 @@
 package kvraft
 
+import "fmt"
+
 const (
 	OK             = "OK"
 	ErrNoKey       = "ErrNoKey"
@@ -27,6 +29,11 @@ type PutAppendArgs struct {
 	SerialNumber int
 }
 
+func (args *PutAppendArgs)String() string {
+	return fmt.Sprintf("PutAppendArgs {ClientId: %d, SerialNumber: %d}", args.ClientId, args.SerialNumber) 
+}
+
+
 type PutAppendReply struct {
 	Err Err
 }
@@ -39,6 +46,9 @@ type GetArgs struct {
 	SerialNumber int
 }
 
+func (args *GetArgs)String() string {
+	return fmt.Sprintf("GetArgs {ClientId: %d, SerialNumber: %d}", args.ClientId, args.SerialNumber) 
+}
 type GetReply struct {
 	Err   Err
 	Value string

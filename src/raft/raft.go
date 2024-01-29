@@ -628,7 +628,7 @@ func (rf *Raft) apply() {
 		rf.cv.L.Unlock()
 		for beg < end { 	// apply
 			if beg == 0 {
-				Debug(dError, "S%d apply(), beg is %d", 0)
+				Debug(dError, "S%d apply(), beg is %d", rf.me, 0)
 			}
 			Debug(dCommit, "S%d apply command beg: %d lastIncludedIndex: %d", rf.me, beg, lastIncludedIndex);
 			msg := ApplyMsg{
@@ -657,7 +657,7 @@ func (rf *Raft) ticker() {
 			continue 
 		}
 		rf.timer -= t
-		Debug(dTimer, "S%d time reduced to %d", rf.me, rf.timer)
+		// Debug(dTimer, "S%d time reduced to %d", rf.me, rf.timer)
 		if (rf.timer > 0 && rf.role == Follower) {
 			rf.mu.Unlock()
 			continue

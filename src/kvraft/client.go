@@ -1,9 +1,13 @@
 package kvraft
 
-import "6.824/labrpc"
-import "crypto/rand"
-import "math/big"
-import "sync"
+import (
+	"crypto/rand"
+	"math/big"
+	"sync"
+
+	"6.824/labrpc"
+	"6.824/raft"
+)
 
 type Clerk struct {
 	servers []*labrpc.ClientEnd
@@ -24,9 +28,9 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
 	// You'll have to add code here.
-	ck.nextSerialNumber = 0
+	ck.nextSerialNumber = 1
 	ck.clientId = nrand() // 随机生成一个clientId
-
+	raft.Debug(raft.DClient, "MakeClerk called clientId is %v", ck.clientId)
 	return ck
 }
 
@@ -48,23 +52,25 @@ func (ck *Clerk) Get(key string) string {
 	seq := ck.nextSerialNumber
 	ck.nextSerialNumber ++
 	ck.mu.Unlock()
-	for i := range ck.servers {
-		args := GetArgs {
-			Key: key,
-			Op: GET,
-			SerialNumber: seq,
-			ClientId: ck.clientId,
-		}
-		reply := GetReply{}
-		ok := ck.servers[i].Call("KVServer.Get", &args, &reply)
-		if ok && reply.Err == OK {
-			return reply.Value
-		} 
-		if ok && reply.Err == ErrTimeOut {
-			continue
+	for {
+		for i := range ck.servers {
+			args := GetArgs {
+				Key: key,
+				Op: GET,
+				SerialNumber: seq,
+				ClientId: ck.clientId,
+			}
+			reply := GetReply{}
+			ok := ck.servers[i].Call("KVServer.Get", &args, &reply)
+			if ok && reply.Err == OK {
+				raft.Debug(raft.DClient, "reply is ok, value is %v , args %v", reply.Value, &args)
+				return reply.Value
+			} 
+			raft.Debug(raft.DClient, "GetReply is %s args is %v, continue...", reply.Err, &args)
 		}
 	}
-	return ""
+	//raft.Debug(raft.DClient, "client Get ruturned nothing")
+	// return ""
 }
 
 //
@@ -83,20 +89,22 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	seq := ck.nextSerialNumber
 	ck.nextSerialNumber ++
 	ck.mu.Unlock()
-	for i := range ck.servers {
-		args := GetArgs {
-			Key: key,
-			Op: op,
-			SerialNumber: seq,
-			ClientId: ck.clientId,
-		}
-		reply := GetReply{}
-		ok := ck.servers[i].Call("KVServer.PutAppend", &args, &reply)
-		if ok && reply.Err == OK {
-			return 
-		}
-		if ok && reply.Err == ErrTimeOut {
-			continue
+	for {
+		for i := range ck.servers {
+			args := PutAppendArgs {
+				Key: key,
+				Op: op,
+				Value: value,
+				SerialNumber: seq,
+				ClientId: ck.clientId,
+			}
+			reply := PutAppendReply{}
+			ok := ck.servers[i].Call("KVServer.PutAppend", &args, &reply)
+			if ok && reply.Err == OK {
+				raft.Debug(raft.DClient, "PutAppendReply is ok, args %v", &args)
+				return 
+			}
+			// raft.Debug(raft.DClient, "reply is %s args is %v, continue...", reply.Err, &args)
 		}
 	}
 }

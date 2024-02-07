@@ -82,7 +82,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	kv.cv.L.Lock()
 	// wait for apply message 
 	beg := time.Now()
-	for time.Since(beg).Milliseconds() < 1000 { //  wait 1000 ms
+	for time.Since(beg).Milliseconds() < 100 { //  wait 1000 ms
 		kv.cv.Wait()
 		// check whether command appears in applyCh
 		length := kv.snapshotIndex + len(kv.commands)
@@ -162,7 +162,6 @@ func (kv *KVServer) DecodeSnapShot(snapshot []byte) {
 // go routine, read committed msgs from applyCh
 func (kv *KVServer) ReadApply() {
 	for !kv.killed() {
-		raft.Debug(raft.DServer, "S%d ReadApply", kv.me)
 		msg := <- kv.applyCh
 		raft.Debug(raft.DServer, "S%d receive command %v, commandValid is %v", kv.me, msg.Command.(Op), msg.CommandValid)
 		if msg.CommandValid {

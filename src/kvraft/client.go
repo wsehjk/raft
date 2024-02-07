@@ -66,11 +66,8 @@ func (ck *Clerk) Get(key string) string {
 				raft.Debug(raft.DClient, "reply is ok, value is %v , args %v", reply.Value, &args)
 				return reply.Value
 			} 
-			raft.Debug(raft.DClient, "GetReply is %s args is %v, continue...", reply.Err, &args)
 		}
 	}
-	//raft.Debug(raft.DClient, "client Get ruturned nothing")
-	// return ""
 }
 
 //
@@ -104,7 +101,6 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 				raft.Debug(raft.DClient, "PutAppendReply is ok, args %v", &args)
 				return 
 			}
-			// raft.Debug(raft.DClient, "reply is %s args is %v, continue...", reply.Err, &args)
 		}
 	}
 }

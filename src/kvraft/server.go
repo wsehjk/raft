@@ -107,7 +107,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		Operation: args.Op,
 		SerialNumber: args.SerialNumber,
 	}
-	_, _, isLeader := kv.rf.Start(cmd)
+	index, _, isLeader := kv.rf.Start(cmd)
 	if !isLeader {
 		reply.Err = ErrWrongLeader
 		return 
@@ -116,12 +116,11 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// wait for apply message 
 	kv.cv.L.Lock()
 	beg := time.Now()
-	for time.Since(beg).Milliseconds() < 1000 { //  wait 1000 ms
+	for time.Since(beg).Milliseconds() < 100 { //  wait 1000 ms
 		kv.cv.Wait()
-		length := kv.snapshotIndex + len(kv.commands)
-		if kv.commands[length-1].Command.(Op) != cmd {
+		if kv.commands[index-1-kv.snapshotIndex].Command.(Op) != cmd {
 			continue
-		} 
+		}
 		reply.Err = OK
 		kv.cv.L.Unlock()
 		return 
@@ -134,6 +133,7 @@ func (kv *KVServer) Execute(cmd Op) {
 	clientId := cmd.ClientId
 	seqNumber := cmd.SerialNumber
 	if seqNumber <= kv.client[clientId] { // 判断可能的重复命令
+		raft.Debug(raft.DServer, "S%d clientid: %d, outdated seqnumber %d <= %d", kv.me, clientId, seqNumber, kv.client[clientId])
 		return 
 	}
 	kv.client[clientId] = seqNumber
@@ -169,8 +169,8 @@ func (kv *KVServer) ReadApply() {
 				Command: msg.Command,
 				Term: msg.CommandTerm,
 			}
-			kv.Execute(ent.Command.(Op))	// 执行命令，
 			kv.mu.Lock()
+			kv.Execute(ent.Command.(Op))	// 执行命令，
 			kv.commands = append(kv.commands, ent)// record commands that have been executed 
 			kv.mu.Unlock()
 			if _, isLeader := kv.rf.GetState(); isLeader {

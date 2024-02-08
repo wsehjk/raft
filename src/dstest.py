@@ -220,9 +220,9 @@ def run_tests(
                             if results[test]['completed'].n == iterations and results[test]['failed'].n == 0:
                                 task_progress.update(tasks[test], description=f"[green]{test}[/green]")
 
-                        #if rc != 0 or archive:
-                        output.mkdir(exist_ok=True, parents=True)
-                        shutil.copy(path, dest)
+                        if rc != 0 or archive:
+                            output.mkdir(exist_ok=True, parents=True)
+                            shutil.copy(path, dest)
  
                         if timing:
                             line = last_line(path)

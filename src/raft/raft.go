@@ -532,6 +532,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 	// Your code here (2B).
 	rf.mu.Lock()
+
 	index = len(rf.logs) + 1 + rf.lastIncludedIndex
 	term = rf.currentTerm
 	isLeader = rf.role == Leader
@@ -547,9 +548,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.logs = append(rf.logs, log)
 	rf.persist()
 	Debug(dLog, "S%d [Leader: %d] length of log is %d", rf.me, rf.currentTerm, len(rf.logs) + rf.lastIncludedIndex)
-
-	// rf.mu.Unlock()
-	rf.HeartBeat() // 及时发送entry，提高效率
+	rf.mu.Unlock()
+	// rf.HeartBeat() // 及时发送entry，提高效率
 	return index, term, isLeader
 }
 
@@ -634,7 +634,7 @@ func (rf *Raft) apply() {
 			if beg == 0 {
 				Debug(dError, "S%d apply(), beg is %d", rf.me, 0)
 			}
-			Debug(dCommit, "S%d apply command beg: %d lastIncludedIndex: %d", rf.me, beg, lastIncludedIndex);
+			// Debug(dCommit, "S%d apply command beg: %d lastIncludedIndex: %d", rf.me, beg, lastIncludedIndex);
 			msg := ApplyMsg{
 				CommandValid: true,
 				Command: logs[beg - lastIncludedIndex].Command,

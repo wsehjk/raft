@@ -91,7 +91,8 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 			return	
 		default:
 			kv.cv.Wait()
-			if kv.commands[index-1-kv.snapshotIndex].Command.(Op) != cmd {
+			i := index-1-kv.snapshotIndex
+			if i >= len(kv.commands) || kv.commands[i].Command.(Op) != cmd {
 				continue
 			}
 			reply.Err = OK
@@ -143,7 +144,8 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 			return	
 		default:
 			kv.cv.Wait()
-			if kv.commands[index-1-kv.snapshotIndex].Command.(Op) != cmd {
+			i := index-1-kv.snapshotIndex
+			if i >= len(kv.commands) || kv.commands[i].Command.(Op) != cmd {
 				continue
 			}
 			reply.Err = OK
@@ -174,16 +176,18 @@ func (kv *KVServer) Execute(cmd Op) {
 	kv.client[clientId] = seqNumber
 	key := cmd.Key
 	value := cmd.Value
-	raft.Debug(raft.DServer, "S%d execute %v", kv.me, cmd)
-	raft.Debug(raft.DServer, "S%d client:%d seqNumber --> %v", kv.me, clientId, seqNumber)
+	raft.Debug(raft.DServer, "S%d execute %v, client:%d seqNumber --> %v", kv.me, cmd, clientId, seqNumber)
+	// raft.Debug(raft.DServer, "S%d ", kv.me, )
 	switch cmd.Operation{
 	case GET:	// do nothing 
 		return 
 	case PUT:	//
 		kv.data[key] = value
+		raft.Debug(raft.DServer, "S%d Put key: %s, value: %s", kv.me, key, kv.data[key])
 	case APP: 	//
 		val := kv.data[key]
 		kv.data[key] = val + value
+		raft.Debug(raft.DServer, "S%d APP key: %s, value: %s", kv.me, key, kv.data[key])
 	}
 }
 

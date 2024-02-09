@@ -297,7 +297,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		} else if rf.votedFor != -1 {
 			reply.Term = rf.currentTerm
 			reply.Granted = false
-			Debug(dVote, "S%d reject votes for S%d votedFor == %s, term is %d", rf.me, args.Candidate, rf.votedFor, args.Term)
+			Debug(dVote, "S%d reject votes for S%d votedFor == %d, term is %d", rf.me, args.Candidate, rf.votedFor, args.Term)
 			return		
 		}
 	}
@@ -495,11 +495,10 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 	//}
 
 	lastIndex := len(rf.logs) + rf.lastIncludedIndex
-	Debug(dLog, "S%d length of log is %d", rf.me, lastIndex)
 	if args.LeaderCommitIndex > rf.commitIndex {
 		rf.commitIndex = min(lastIndex, args.LeaderCommitIndex)	
 	}
-	Debug(dInfo, "S%d AppendEntry commitIndex: %d", rf.me, rf.commitIndex)
+	Debug(dInfo, "S%d length of log is %d AppendEntry commitIndex: %d", rf.me, lastIndex, rf.commitIndex)
 	if (rf.lastApplied < rf.commitIndex) {
 		rf.cv.Signal()
 	}
@@ -578,12 +577,12 @@ func (rf *Raft) updateCommitIndex() {
 	tot := len(rf.peers)
 	// rf.commitIndex == len(rf.logs) 怎样
 	pre := rf.commitIndex
-	Debug(dCommit, "S%d updateCommitIndex rf.commitIndex is %d", rf.me, rf.commitIndex)
+	Debug(dCommit, "S%d updateCommitIndex rf.commitIndex is %d, lastIncludedIndex: %d", rf.me, rf.commitIndex, rf.lastIncludedIndex)
 	if rf.commitIndex == 0 {
 		Debug(dError, "S%d updatecommmitIndex rf.commitIndx is %d, lastIncludedIndex: %d", rf.me, 0, rf.lastIncludedIndex)
 	}
 	for i := rf.commitIndex; i < len(rf.logs) + rf.lastIncludedIndex; i++ {
-		Debug(dCommit, "S%d updatecommitIndex i: %d, lastIncludedIndex: %d", rf.me, i, rf.lastIncludedIndex)
+		// Debug(dCommit, "S%d updatecommitIndex i: %d, lastIncludedIndex: %d", rf.me, i, rf.lastIncludedIndex)
 		if rf.logs[i - rf.lastIncludedIndex].Term != rf.currentTerm {
 			continue
 		}

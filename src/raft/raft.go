@@ -82,6 +82,8 @@ type Raft struct {
 	currentTerm int
 	logs []Entry
 
+	applying int32 // 表示raft是否在正在提交
+
 	role string
 	timer int
 
@@ -179,10 +181,10 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 // service no longer needs the log through (and including)
 // that index. Raft should now trim its log as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
-	Debug(dSnap, "S%d snapshot called, index: %d", rf.me, index)
 	// Your code here (2D).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	Debug(dSnap, "S%d snapshot called, index: %d, rf.lastIncludedIndex %d", rf.me, index, rf.lastIncludedIndex)
 	rf.lastIncludedTerm = rf.logs[index - rf.lastIncludedIndex - 1].Term
 	logs := []Entry{}	// 是否需要再复制一份
 	logs = append(logs, rf.logs[index-rf.lastIncludedIndex : ]...)
@@ -219,10 +221,21 @@ func (rf *Raft) InstallSnapshot(args *SnapshotArgs, reply *SnapshotReply) {
 		rf.persist()	
 	}
 	rf.role = Follower
-	Debug(dRole, "S%d ---> follower after receive snapshot from valid Leader", rf.me)
-
 	rf.timer = GetTimer()   // receive append entries from valid Leader 
-	Debug(dTimer, "S%d reset time: %d", rf.me, rf.timer)	
+	Debug(dSnap, "S%d ---> follower, %d", rf.me, rf.timer)
+
+	// 正在提交 不接受 snapshot // 见 lab3/bug.md ## TestSpeed3A 性能问题 
+	if (atomic.LoadInt32(&rf.applying) == 1) {	
+		reply.Term = rf.currentTerm
+		rf.mu.Unlock()
+		return 		
+	}
+
+	if (args.LastIncludedIndex <= rf.commitIndex) {// 见 lab3/bug.md ## TestSpeed3A 性能问题 
+		reply.Term = rf.currentTerm
+		rf.mu.Unlock()
+		return 	
+	}
 
 	if (args.LastIncludedIndex < rf.lastIncludedIndex) {  // outdated snapshot
 		reply.Term = rf.currentTerm
@@ -417,10 +430,9 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 		rf.persist()
 	}
 	rf.role = Follower
-	Debug(dRole, "S%d ---> follower after receive append entry from valid Leader", rf.me)
 
 	rf.timer = GetTimer()   // receive append entries from valid Leader 
-	Debug(dTimer, "S%d reset time: %d", rf.me, rf.timer)
+	Debug(dRole, "S%d ---> follower after receive entry timer: %d", rf.me, rf.timer)
 
 	if  args.PrevLogIndex > len(rf.logs) + rf.lastIncludedIndex{
 		reply.Term = rf.currentTerm
@@ -464,7 +476,6 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 	reply.Term = rf.currentTerm
 	reply.Accept = true
 
-	//if len(args.Logs) != 0 {
 	i := args.PrevLogIndex
 	j := 0
 	for i < len(rf.logs) + rf.lastIncludedIndex && j < len(args.Logs)  {
@@ -547,8 +558,10 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.logs = append(rf.logs, log)
 	rf.persist()
 	Debug(dLog, "S%d [Leader: %d] length of log is %d", rf.me, rf.currentTerm, len(rf.logs) + rf.lastIncludedIndex)
-	rf.mu.Unlock()
-	// rf.HeartBeat() // 及时发送entry，提高效率
+	//rf.mu.Unlock()
+	go func() {
+		rf.HeartBeat() // 及时发送entry，提高效率
+	}()
 	return index, term, isLeader
 }
 
@@ -575,14 +588,9 @@ func (rf *Raft) killed() bool {
 
 func (rf *Raft) updateCommitIndex() {
 	tot := len(rf.peers)
-	// rf.commitIndex == len(rf.logs) 怎样
 	pre := rf.commitIndex
 	Debug(dCommit, "S%d updateCommitIndex rf.commitIndex is %d, lastIncludedIndex: %d", rf.me, rf.commitIndex, rf.lastIncludedIndex)
-	if rf.commitIndex == 0 {
-		Debug(dError, "S%d updatecommmitIndex rf.commitIndx is %d, lastIncludedIndex: %d", rf.me, 0, rf.lastIncludedIndex)
-	}
 	for i := rf.commitIndex; i < len(rf.logs) + rf.lastIncludedIndex; i++ {
-		// Debug(dCommit, "S%d updatecommitIndex i: %d, lastIncludedIndex: %d", rf.me, i, rf.lastIncludedIndex)
 		if rf.logs[i - rf.lastIncludedIndex].Term != rf.currentTerm {
 			continue
 		}
@@ -629,6 +637,8 @@ func (rf *Raft) apply() {
 		logs = append(logs, rf.logs...)
 		rf.lastApplied = rf.commitIndex  // 提前设置 lastApplied
 		rf.cv.L.Unlock()
+
+		atomic.StoreInt32(&rf.applying, 1)
 		for beg < end { 	// apply
 			if beg == 0 {
 				Debug(dError, "S%d apply(), beg is %d", rf.me, 0)
@@ -644,6 +654,7 @@ func (rf *Raft) apply() {
 			rf.applyCh <- msg
 			beg ++
 		}
+		atomic.StoreInt32(&rf.applying, 0)
 	}
 }
 // The ticker go routine starts a new election if this peer hasn't received
@@ -803,7 +814,7 @@ func (rf *Raft) HeartBeat() {
 				if rf.role != Leader || rf.currentTerm != term {
 					return 
 				}
-				if (reply.Term < rf.currentTerm) {
+				if (reply.Term < rf.currentTerm) {	// 过时的回复
 					return 
 				}
 				if (reply.Term > rf.currentTerm) {
@@ -850,7 +861,7 @@ func (rf *Raft) HeartBeat() {
 				if rf.role != Leader || rf.currentTerm != args.Term{
 					return 
 				}
-				if reply.Term < rf.currentTerm {
+				if reply.Term < rf.currentTerm { // 过时的回复
 					return 
 				}
 				Debug(dInfo, "S%d [Leader: %d] receive append reply %v from S%d ", rf.me, rf.currentTerm ,reply, server)

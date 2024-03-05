@@ -73,6 +73,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 		Operation: args.Op,
 		SerialNumber: args.SerialNumber,
 	}
+	raft.Debug(raft.DServer, "S%d Get called, cmd is %v", kv.me, &cmd)
 	kv.cv.L.Lock()
 	defer kv.cv.L.Unlock()
 
@@ -81,7 +82,6 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 		reply.Err = ErrWrongLeader
 		return 
 	}
-	raft.Debug(raft.DServer, "S%d Get called, cmd is %v", kv.me, &cmd)
 	// wait for apply message 
 	timeout := time.After(time.Millisecond*100)
 	for {
@@ -100,21 +100,6 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 			return 	
 		}
 	}
-	// beg := time.Now()
-	// for time.Since(beg).Milliseconds() < 100 { //  wait 1000 ms
-	// 	kv.cv.Wait()
-	// 	// check whether command appears in applyCh
-	// 	length := kv.snapshotIndex + len(kv.commands)
-	// 	if kv.commands[length-1].Command.(Op) != cmd {
-	// 		continue
-	// 	} 
-	// 	reply.Err = OK
-	// 	reply.Value = kv.data[cmd.Key]
-	// 	kv.cv.L.Unlock()
-	// 	return 
-	// }
-	// reply.Err = ErrTimeOut
-	// kv.cv.L.Unlock()
 }
 // 多个client调用，也都有多个 PutAppend handler运行
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
@@ -126,6 +111,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		Operation: args.Op,
 		SerialNumber: args.SerialNumber,
 	}
+	raft.Debug(raft.DServer, "S%d PutAppend called, cmd is %v", kv.me, &cmd)
 	kv.cv.L.Lock()
 	defer kv.cv.L.Unlock()
 	index, _, isLeader := kv.rf.Start(cmd)
@@ -133,7 +119,6 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		reply.Err = ErrWrongLeader
 		return 
 	}
-	raft.Debug(raft.DServer, "S%d PutAppend called, cmd is %v", kv.me, &cmd)
 
 	// wait for apply message 
 	timeout := time.After(time.Millisecond*100)

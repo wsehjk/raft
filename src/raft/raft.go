@@ -503,7 +503,6 @@ func (rf *Raft) AppendEntry(args *AppendEntryArgs, reply *AppendEntryReply) {
 			rf.persist()
 		}
 	}
-	//}
 
 	lastIndex := len(rf.logs) + rf.lastIncludedIndex
 	if args.LeaderCommitIndex > rf.commitIndex {
@@ -726,9 +725,6 @@ func (rf *Raft) ticker() {
 				rf.mu.Lock()
 				defer rf.mu.Unlock()
 				if rf.role != Candidate || rf.currentTerm != args.Term{
-					return 
-				}
-				if reply.Term < rf.currentTerm {
 					return
 				}
 				if reply.Granted {
@@ -788,7 +784,6 @@ func (rf *Raft) HeartBeat() {
 	lastIncludedTerm := rf.lastIncludedTerm
 	snapshots := rf.snapshots
 	rf.mu.Unlock()
-
 	for i := range rf.peers {
 		if i == leaderId {
 			continue
